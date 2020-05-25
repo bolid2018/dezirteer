@@ -1,17 +1,21 @@
-#test
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
 import os
 import gui_support
+from sys import platform
 import matplotlib
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk as toolbar
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse
 from matplotlib.patches import Rectangle
 from tkinter import filedialog
-from math import sqrt, tan, atan, degrees, cos, sin, pi
+from math import sqrt, tan, atan, degrees, cos, sin, pi, floor
 from scipy import stats
+from numpy import log10
+
 
 try:
     from Tkinter import *
@@ -27,35 +31,43 @@ except ImportError:
     py3 = True
 from math_module import *
 
-matplotlib.use("TkAgg")
+
+
+
+
+def truncate(f, n):
+    return floor(f * 10 ** n) / 10 ** n
 
 #calculates KS p- and d-values from current and previous grainsets. If previous grainset doesn't exist,
 #sets 0 values to both variables
 def set_pval_dval():
-    global g_prev_cum, g_grainset
+    global g_prev_cum, g_grainset, g_pval_dval, g_ckde, g_cpdp
     if g_prev_cum == []:
         pval = 0
         dval = 0
     else:
         if g_graph_settings.pdp_kde_hist == 0:
-            curr_cum = g_grainset.ckde(g_graph_settings.bandwidth)
+            curr_cum = g_ckde
         elif g_graph_settings.pdp_kde_hist == 1:
-            curr_cum = g_grainset.cpdp(gui_support.varUncType.get())
+            curr_cum = g_cpdp
         else:
             curr_cum = []
         dval = d_value(curr_cum, g_prev_cum)
         pval = p_value(dval, g_number_of_good_grains[0], g_prev_n[0])
-    return [pval, dval]
+    g_pval_dval = [pval, dval]
+    #return [pval, dval]
 
 
 def peaks():
+    global g_kde, g_pdp
     if g_graph_settings.pdp_kde_hist == 0:
-        return g_grainset.kde(g_graph_settings.bandwidth)[1]
+        return g_kde[1]
     else:
-        return g_grainset.pdp(gui_support.varUncType.get())[1]
+        return g_pdp[1]
 
 
 def show_calc_frame(container):
+        global g_pval_dval
         frContainer = Frame(container)
         frContainer.configure(relief=GROOVE)
         frContainer.configure(borderwidth="2")
@@ -63,9 +75,9 @@ def show_calc_frame(container):
         frContainer.configure(background="#d9d9d9")
         frContainer.configure(highlightbackground="#d9d9d9")
         frContainer.configure(highlightcolor="black")
-        frContainer.grid(row=0, column=0, sticky='NWES')
-
-        elements = ["number of good grains", "weighted average age", "±1σ", "±95% conf.", "MSWD", "max age", "min age"]
+        frContainer.pack(fill=BOTH, expand=1)
+        container.resizable(False, False)
+        elements = ["number of good grains", "weighted average age", "±1σ", "95% conf.", "MSWD", "max age", "min age"]
         list_of_labels = []
         counter = 0
         for n in elements:
@@ -74,7 +86,7 @@ def show_calc_frame(container):
             list_of_labels[counter*2].grid(row=counter, column=0, pady=5, padx=5, sticky='e')
             list_of_labels[counter*2].configure(text=n)
             list_of_labels[counter*2 + 1].grid(row=counter, column=1, pady=5, padx=5, sticky='w')
-            list_of_labels[counter*2 + 1].configure(text=round(g_number_of_good_grains[counter], 1))
+            list_of_labels[counter*2 + 1].configure(text=round(g_number_of_good_grains[counter], 2))
             counter += 1
 
         for x in range(0, 8):
@@ -87,28 +99,26 @@ def show_calc_frame(container):
         list_of_labels[counter * 2 + 2].grid(row=counter + 1, column=0, pady=5, padx=5, sticky='e')
         list_of_labels[counter * 2 + 2].configure(text="KS p-val")
         list_of_labels[counter * 2 + 3].grid(row=counter + 1, column=1, pady=5, padx=5, sticky='w')
-        list_of_labels[counter * 2 + 3].configure(text=set_pval_dval()[0])
+        list_of_labels[counter * 2 + 3].configure(text=round(g_pval_dval[0], 2))
 
         list_of_labels[counter * 2 + 4].grid(row=counter + 2, column=0, pady=5, padx=5, sticky='e')
         list_of_labels[counter * 2 + 4].configure(text="KS d-val")
         list_of_labels[counter * 2 + 5].grid(row=counter + 2, column=1, pady=5, padx=5, sticky='w')
-        list_of_labels[counter * 2 + 5].configure(text=set_pval_dval()[1])
-
-
+        list_of_labels[counter * 2 + 5].configure(text=round(g_pval_dval[1], 2))
 
 
 class OperationWindow(Frame):
     def __init__(self, master):
         Frame.__init__(self, master)
         self.master = master
-        global g_filters, g_grainset, g_list_col_names
+        global g_filters, g_grainset, g_list_col_names, g_ckde, g_cpdp, g_kde, g_pdp
 
         _bgcolor = '#d9d9d9'
         _fgcolor = '#000000'
         _compcolor = '#d9d9d9'
         _ana1color = '#d9d9d9'
         _ana2color = '#d9d9d9'
-        font9 = "-family {Segoe UI} -size 12 -weight bold -slant roman" \
+        font9 = "-family {Segoe UI} -size 8 -weight bold -slant roman" \
                 " -underline 0 -overstrike 0"
 
         self.style = ttk.Style()
@@ -121,29 +131,186 @@ class OperationWindow(Frame):
 
         master.columnconfigure(1, weight=1)
         master.rowconfigure(0, weight=1)
+        master.rowconfigure(2, weight=1)
 
-        self.frTable = Frame(master, width=955, height=255)
+        # _____________________frGraph___________________________________________________________________________________
+        self.frGraph = Frame(master)
+        self.frGraph.configure(relief=GROOVE)
+        self.frGraph.configure(borderwidth="2")
+        self.frGraph.configure(relief=GROOVE)
+        self.frGraph.configure(background="#d9d9d9")
+        self.frGraph.configure(highlightbackground="#d9d9d9")
+        self.frGraph.configure(highlightcolor="black")
+        self.frGraph.grid(row=0, rowspan=2, columnspan=3, sticky='nswe')
+        self.frGraph.columnconfigure(0, weight=1)
+        self.frGraph.columnconfigure(1, weight=1)
+        self.frGraph.columnconfigure(2, weight=1)
+        self.frGraph.rowconfigure(0, weight=1)
+
+        #______________frCon
+        self.frConc = Frame(self.frGraph)
+        self.frConc.grid(column=0, row=0, sticky='nswe')
+        self.frConc.configure(relief=GROOVE)
+        self.frConc.configure(borderwidth="2")
+        self.frConc.configure(relief=GROOVE)
+        self.frConc.configure(background="#d9d9d9")
+        self.frConc.configure(highlightbackground="#d9d9d9")
+        self.frConc.configure(highlightcolor="black")
+
+        self.fig = Figure(figsize=(4, 2.15), frameon=False)
+        # check if MacOs, then plt.figure(), otherwise won't plot
+        if platform == "darwin":
+            self.fig = plt.figure()
+        self.ax_conc = self.fig.add_subplot(111)
+        self.ax_conc.axes
+        self.ax_conc.set_xlabel('207Pb/235U')
+        self.ax_conc.set_ylabel('206Pb/238U')
+        self.ax_conc.set_title('Concordia')
+        self.ax_conc.axes.format_coord = lambda x, y: ""
+        try:
+            self.ax_conc.plot(list(range(0, EarthAge)), graph_to_draw)
+        except UnboundLocalError:
+            pass
+
+        self.canvas_conc = FigureCanvasTkAgg(self.fig, self.frConc)
+        self.canvas_conc.draw()
+        self.canvas_conc.get_tk_widget().pack(side='top', fill='both', expand=1)
+
+        self.frConcToolbar = Frame(self.frGraph)
+        self.frConcToolbar.grid(column=0, row=1, sticky='ew')
+        self.frConcToolbar.configure(relief=GROOVE)
+        self.frConcToolbar.configure(borderwidth="2")
+        self.frConcToolbar.configure(relief=GROOVE)
+        self.frConcToolbar.configure(background="#d9d9d9")
+        self.frConcToolbar.configure(highlightbackground="#d9d9d9")
+        self.frConcToolbar.configure(highlightcolor="black")
+        self.frConcToolbar.configure(width=100)
+
+        # ______________frProb
+        self.frProb = Frame(self.frGraph)
+        self.frProb.grid(row=0, column=1, sticky='nswe')
+        self.frProb.configure(relief=GROOVE)
+        self.frProb.configure(borderwidth="2")
+        self.frProb.configure(relief=GROOVE)
+        self.frProb.configure(background="#d9d9d9")
+        self.frProb.configure(highlightbackground="#d9d9d9")
+        self.frProb.configure(highlightcolor="black")
+
+        try:
+            if (g_graph_settings.pdp_kde_hist == 0) and (g_kde != []):
+                graph_to_draw = g_kde
+
+            elif (g_graph_settings.pdp_kde_hist == 1) and (g_pdp != []):
+                graph_to_draw = g_pdp[0]
+            else:
+                pass
+        except NameError:
+            pass
+
+        self.fig = Figure(figsize=(4, 2.15), frameon=False)
+        # check if MacOs, then plt.figure(), otherwise won't plot
+        if platform == "darwin":
+            self.fig = plt.figure()
+        self.ax_prob = self.fig.add_subplot(111)
+        self.ax_prob.axes
+        self.ax_prob.axes.format_coord = lambda x, y: ""
+        self.ax_prob.set_title('KDE/PDP/Histogram')
+        self.ax_prob.axes.get_yaxis().set_visible(False)
+        try:
+            self.ax_prob.plot(list(range(0, EarthAge)), graph_to_draw)
+        except UnboundLocalError:
+            pass
+
+        self.canvas_prob = FigureCanvasTkAgg(self.fig, self.frProb)
+        self.canvas_prob.draw()
+        self.canvas_prob.get_tk_widget().pack(side='top', fill='both', expand=1)
+
+        self.frProbToolbar = Frame(self.frGraph)
+        self.frProbToolbar.grid(row=1, column=1, sticky='ew')
+        self.frProbToolbar.configure(relief=GROOVE)
+        self.frProbToolbar.configure(borderwidth="2")
+        self.frProbToolbar.configure(relief=GROOVE)
+        self.frProbToolbar.configure(background="#d9d9d9")
+        self.frProbToolbar.configure(highlightbackground="#d9d9d9")
+        self.frProbToolbar.configure(highlightcolor="black")
+        self.frProbToolbar.configure(width=100)
+
+        # ______________frCum
+        self.frCum = Frame(self.frGraph)
+        self.frCum.grid(row=0, column=2, sticky='nswe')
+        self.frCum.configure(relief=GROOVE)
+        self.frCum.configure(borderwidth="2")
+        self.frCum.configure(relief=GROOVE)
+        self.frCum.configure(background="#d9d9d9")
+        self.frCum.configure(highlightbackground="#d9d9d9")
+        self.frCum.configure(highlightcolor="black")
+        self.frCum.configure(height=10)
+
+        try:
+            if (g_graph_settings.pdp_kde_hist == 0) and (g_ckde != []):
+                graph_to_draw = g_ckde
+
+            elif (g_graph_settings.pdp_kde_hist == 1) and (g_cpdp != []):
+                graph_to_draw = g_cpdp
+            else:
+                pass
+        except NameError:
+            pass
+
+        self.fig = Figure(figsize=(4, 2.15), frameon=False)
+        #check if MacOs, then plt.figure(), otherwise won't plot
+        if platform == "darwin":
+            self.fig = plt.figure()
+        self.ax_cum = self.fig.add_subplot(111)
+        self.ax_cum.axes.format_coord = lambda x, y: ""
+        self.ax_cum.set_title('Cumulative diagrams')
+        self.ax_cum.axes.get_yaxis().set_visible(False)
+
+        try:
+            self.ax_cum.plot(list(range(0, EarthAge)), graph_to_draw)
+        except UnboundLocalError:
+            pass
+
+        self.canvas_cum = FigureCanvasTkAgg(self.fig, self.frCum)
+        self.canvas_cum.draw()
+        self.canvas_cum.get_tk_widget().pack(side='top', fill='both', expand=1)
+
+        self.frCumToolbar = Frame(self.frGraph)
+        self.frCumToolbar.grid(row=1, column=2, sticky='ew')
+        self.frCumToolbar.configure(relief=GROOVE)
+        self.frCumToolbar.configure(borderwidth="2")
+        self.frCumToolbar.configure(relief=GROOVE)
+        self.frCumToolbar.configure(background="#d9d9d9")
+        self.frCumToolbar.configure(highlightbackground="#d9d9d9")
+        self.frCumToolbar.configure(highlightcolor="black")
+        self.frCumToolbar.configure(width=100)
+
+        #global toolbarConc, toolbarProb, toolbarCum
+        toolbarConc = toolbar(self.canvas_conc, self.frConcToolbar)
+        toolbarProb = toolbar(self.canvas_prob, self.frProbToolbar)
+        toolbarCum = toolbar(self.canvas_cum, self.frCumToolbar)
+
+        # ________frTable_________________________________________________________________________________________________
+        self.frTable = Frame(master, height=100)
         self.frTable.configure(relief=GROOVE)
         self.frTable.configure(borderwidth="2")
         self.frTable.configure(relief=GROOVE)
         self.frTable.configure(background="#d9d9d9")
         self.frTable.configure(highlightbackground="#d9d9d9")
         self.frTable.configure(highlightcolor="black")
-        self.frTable.grid(row=0, column=0, sticky='NWES')
+        self.frTable.grid(row=2, columnspan=3, sticky='nsew')
         self.style.configure('Treeview.Heading', font="TkDefaultFont")
 
         self.Table = ScrolledTreeView(self.frTable)
-        self.Table.place(relx=0.0, rely=0.0, relheight=0.96, relwidth=1.0)
+        self.Table.place(relx=0.0, rely=0.0, relheight=1.0, relwidth=1.0)
         self.Table['columns'] = g_list_col_names
         self.Table.bind("<Double-1>", self.tableOnDoubleClick)
 
-
-        #pars_onChange = []
-
-
         # ________frOper_________________________________________________________________________________________________
         self.frOper = Frame(master)
-        self.frOper.grid(row=1, column=0, sticky='sew')
+        self.frOper.grid(row=3, columnspan=3, sticky='sew')
+
+        self.frOper.columnconfigure(1, weight=1)
 
         self.frImport = Frame(self.frOper)
         self.frImport.grid(row=0, column=0, sticky='ns')
@@ -158,61 +325,10 @@ class OperationWindow(Frame):
         self.lbImport.grid(row=0, columnspan=3, sticky="ew", pady=5)
         self.lbImport.configure(font=font9)
         self.apply_style(self.lbImport)
-        self.lbImport.configure(text="1. Import data")
-
-        '''self.lbSeparatorType = Label(self.frImport)
-        self.lbSeparatorType.grid(row=1, column=0, columnspan=1, pady=5, sticky='e')
-        self.apply_style(self.lbSeparatorType)
-        self.lbSeparatorType.configure(text='Analysis # separator:')
-
-        self.rbUnderscore = Radiobutton(self.frImport)
-        self.rbUnderscore.grid(row=1, column=2, sticky='w')
-        self.apply_style(self.rbUnderscore)
-        self.rbUnderscore.configure(font="TkTextFont")
-        self.rbUnderscore.configure(text="_")
-        self.rbUnderscore.configure(variable=gui_support.varSeparatorType, value="_")
-        self.rbUnderscore.configure(command=lambda: gui_support.onChange(25, gui_support.varSeparatorType, pars_onChange))
-        self.rbUnderscore.select()
-
-        self.rbDash = Radiobutton(self.frImport)
-        self.rbDash.grid(row=1, column=3, sticky='w')
-        self.apply_style(self.rbDash)
-        self.rbDash.configure(font="TkTextFont")
-        self.rbDash.configure(text="-")
-        self.rbDash.configure(variable=gui_support.varSeparatorType, value="-")
-        self.rbDash.configure(
-            command=lambda: gui_support.onChange(25, gui_support.varSeparatorType, pars_onChange))
-
-        self.rbComma = Radiobutton(self.frImport)
-        self.rbComma.grid(row=1, column=4, sticky='w')
-        self.apply_style(self.rbComma)
-        self.rbComma.configure(font="TkTextFont")
-        self.rbComma.configure(text=",")
-        self.rbComma.configure(variable=gui_support.varSeparatorType, value=",")
-        self.rbComma.configure(
-            command=lambda: gui_support.onChange(25, gui_support.varSeparatorType, pars_onChange))
-
-        self.rbDot = Radiobutton(self.frImport)
-        self.rbDot.grid(row=1, column=5, sticky='w')
-        self.apply_style(self.rbDot)
-        self.rbDot.configure(font="TkTextFont")
-        self.rbDot.configure(text=".")
-        self.rbDot.configure(variable=gui_support.varSeparatorType, value=".")
-        self.rbDot.configure(
-            command=lambda: gui_support.onChange(25, gui_support.varSeparatorType, pars_onChange))'''
-
-
-
-        #self.cbSeparatorType = ttk.Combobox(self.frImport)
-        #self.cbSeparatorType.grid(row=1, column=1, sticky='w')
-        #self.cbSeparatorType.configure(textvariable=gui_support.varSeparatorType)
-        #self.cbSeparatorType.configure(width=3)
-        #self.cbSeparatorType.configure(values=['_', '-', '.', ','], state='readonly')
-        #self.cbSeparatorType.bind('<<ComboboxSelected>>', lambda event: gui_support.onChange(25, self.cbSeparatorType.get(), pars_onChange))
-        #self.cbSeparatorType.current(0)
+        self.lbImport.configure(text="Import data")
 
         self.btnImport = Button(self.frImport, width=14, height=2)
-        self.btnImport.grid(row=2, columnspan=3, pady=10)
+        self.btnImport.grid(row=2, columnspan=3, pady=5)
         self.apply_style(self.btnImport)
         self.btnImport.configure(pady="0")
         self.btnImport.configure(text="Import")
@@ -221,17 +337,17 @@ class OperationWindow(Frame):
         self.lbStatus = Label(self.frImport)
         self.lbStatus.grid(row=3, column=0)
         self.apply_style(self.lbStatus)
-        self.lbStatus.configure(text='''Status:''')
+        self.lbStatus.configure(text='Status:')
 
         self.lbShowStatus = Label(self.frImport)
-        self.lbShowStatus.grid(row=3, column=1, pady=5, sticky='w')
+        self.lbShowStatus.grid(row=3, column=1, pady=5, padx=5, sticky='w')
         self.apply_style(self.lbShowStatus)
         self.lbShowStatus.configure(relief=SUNKEN)
 
         self.lbUncType = Label(self.frImport)
         self.lbUncType.grid(row=4, column=0)
         self.apply_style(self.lbUncType)
-        self.lbUncType.configure(text='''Uncertainty type:''')
+        self.lbUncType.configure(text='Uncertainty type:')
 
         self.rbInternal = Radiobutton(self.frImport)
         self.rbInternal.grid(row=4, column=1, sticky='w')
@@ -249,499 +365,286 @@ class OperationWindow(Frame):
         self.rbPropagated.configure(variable=gui_support.varUncType, value=2)
         self.rbPropagated.configure(command=lambda: gui_support.onChange(23, gui_support.varUncType.get(), pars_onChange))
 
+        # _______________frSample________________________________________________________________________________________
+        self.frSample = Frame(self.frOper)
+        self.frSample.grid(row=0, column=1, sticky='nsew')
+        self.frSample.configure(relief=GROOVE)
+        self.frSample.configure(borderwidth="2")
+        self.frSample.configure(relief=GROOVE)
+        self.frSample.configure(background="#d9d9d9")
+        self.frSample.configure(highlightbackground="#d9d9d9")
+        self.frSample.configure(highlightcolor="black")
 
-        '''self.cbUncType = ttk.Combobox(self.frImport)
-        self.cbUncType.grid(row=4, column=1, sticky='w')
-        self.cbUncType.configure(textvariable=gui_support.varUncType)
-        self.cbUncType.configure(width=10)
-        self.cbUncType.configure(values=['Internal', 'Propagated'], state='readonly')
-        self.cbUncType.current(0)
-        #self.cbUncType.configure(command=lambda: gui_support.onChange(23, gui_support.varUncType.get(), pars_onChange, ))
-        '''
-        self.lbChooseSample = Label(self.frImport)
-        self.lbChooseSample.grid(row=6, columnspan=3, sticky="ew", pady=15)
+        self.lbChooseSample = Label(self.frSample)
+        self.lbChooseSample.grid(row=0, columnspan=3, sticky="ew", pady=5)
         self.apply_style(self.lbChooseSample)
         self.lbChooseSample.configure(font=font9)
-        self.lbChooseSample.configure(text='''2. Choose sample''')
+        self.lbChooseSample.configure(text='Choose sample(-s)')
 
-        self.lboxSamples = Listbox(self.frImport, selectmode='extended', exportselection=0, height=5)
-        self.lboxSamples.grid(row=7, columnspan=3, sticky="ew", padx=5)
-
-        scrollbar = Scrollbar(self.lboxSamples, orient="vertical")
+        scrollbar = Scrollbar(self.frSample, orient=VERTICAL)
+        self.lboxSamples = Listbox(self.frSample, selectmode='extended', exportselection=0, yscrollcommand=scrollbar.set)
+        self.lboxSamples.config(height=10, width=10)
         scrollbar.config(command=self.lboxSamples.yview)
-        scrollbar.pack(side="right", fill="y")
+        scrollbar.grid(row=1, column=1, padx=5, sticky="nsw")
+        self.lboxSamples.grid(row=1, column=0, sticky="ew", padx=5)
+        self.frSample.columnconfigure(0, weight=1)
 
-        self.lboxSamples.config(yscrollcommand=scrollbar.set)
+        # _______________frAgeDisc________________________________________________________________________________________
+        self.frAgeDisc = Frame(self.frOper)
+        self.frAgeDisc.configure(relief=GROOVE)
+        self.frAgeDisc.configure(borderwidth="2")
+        self.frAgeDisc.configure(relief=GROOVE)
+        self.frAgeDisc.configure(background="#d9d9d9")
+        self.frAgeDisc.configure(highlightbackground="#d9d9d9")
+        self.frAgeDisc.configure(highlightcolor="black")
+        self.frAgeDisc.grid(row=0, column=2, sticky='ns')
 
-        self.lbUConcFilter = Label(self.frImport)
-        self.lbUConcFilter.grid(row=8, columnspan=3, pady=4, sticky='ew')
-        self.apply_style(self.lbUConcFilter)
-        self.lbUConcFilter.configure(font=font9)
-        self.lbUConcFilter.configure(text="3. Filter by Uconc?")
+        self.lbWhichAge = Label(self.frAgeDisc)
+        self.lbWhichAge.grid(row=0, columnspan=3, sticky='ew', pady=5)
+        self.apply_style(self.lbWhichAge)
+        self.lbWhichAge.configure(font=font9)
+        self.lbWhichAge.configure(text='How to calc best age:')
+        self.lbWhichAge.configure(state=DISABLED)
 
-        self.rbNoUconc = Radiobutton(self.frImport)
-        self.rbNoUconc.grid(row=9, column=0, sticky='w')
-        self.apply_style(self.rbNoUconc)
-        self.rbNoUconc.configure(font="TkTextFont")
-        self.rbNoUconc.configure(text="Don't filter")
-        self.rbNoUconc.select()
-        self.rbNoUconc.configure(variable=gui_support.varUConc, value=False)
-        self.rbNoUconc.configure(command=lambda: gui_support.onChange(2, False, pars_onChange, self.scUconcCutoff))
+        self.entAgeCutoff = Spinbox(self.frAgeDisc, from_=0, to=EarthAge)
+        self.entAgeCutoff.grid(row=1, column=1, pady=5, padx=5, sticky='w')
+        self.entAgeCutoff.configure(background="white")
+        self.entAgeCutoff.configure(disabledforeground="#a3a3a3")
+        self.entAgeCutoff.configure(font="TkFixedFont")
+        self.entAgeCutoff.configure(foreground="#000000")
+        self.entAgeCutoff.configure(insertbackground="black")
+        self.entAgeCutoff.configure(textvariable=gui_support.varAgeCutoff)
+        self.entAgeCutoff.configure(command=lambda: gui_support.onChange(19, float(self.entAgeCutoff.get()), pars_onChange))
+        self.entAgeCutoff.bind('<KeyRelease>', (lambda _:gui_support.onChange(19,
+                                                                              float(''.join(c for c in self.entAgeCutoff.get() if (c.isdigit() or c =='.'))),
+                                                                              pars_onChange)))
+        self.entAgeCutoff.configure(state=DISABLED)
+        self.entAgeCutoff.configure(width=5)
 
-        self.rbUseUconc = Radiobutton(self.frImport)
-        self.rbUseUconc.grid(row=10, column=0, sticky='sw')
-        self.apply_style(self.rbUseUconc)
-        self.rbUseUconc.configure(text="Cutoff at")
-        self.rbUseUconc.configure(variable=gui_support.varUConc, value=True)
-        self.rbUseUconc.configure(command=lambda: gui_support.onChange(2, True, pars_onChange, self.scUconcCutoff))
+        self.lblAgeMa = Label(self.frAgeDisc)
+        self.lblAgeMa.grid(row=1, column=2, sticky='w', pady=5)
+        self.apply_style(self.lblAgeMa)
+        self.lblAgeMa.configure(text="Ma")
 
-        self.scUconcCutoff = Scale(self.frImport)
-        self.scUconcCutoff.grid(row=9, column=1, sticky='es', rowspan=2)
-        self.scUconcCutoff.configure(activebackground="#d9d9d9")
-        self.scUconcCutoff.configure(sliderlength=20)
-        self.scUconcCutoff.configure(background="#d9d9d9")
-        self.scUconcCutoff.configure(font="TkTextFont")
-        self.scUconcCutoff.configure(foreground="#000000")
-        self.scUconcCutoff.configure(highlightbackground="#d9d9d9")
-        self.scUconcCutoff.configure(highlightcolor="black")
-        self.scUconcCutoff.configure(length="100")
-        self.scUconcCutoff.configure(orient="horizontal")
-        self.scUconcCutoff.configure(tickinterval="0")
-        self.scUconcCutoff.configure(to="3000")
-        self.scUconcCutoff.configure(bd=2)
-        self.scUconcCutoff.set(1000)
-        self.scUconcCutoff.configure(state=DISABLED)
-        self.scUconcCutoff.configure(troughcolor="#d9d9d9")
-        self.scUconcCutoff.configure(command=lambda x: gui_support.onChange(18, self.scUconcCutoff.get(), pars_onChange))
+        self.cbWhichAge = ttk.Combobox(self.frAgeDisc)
+        self.cbWhichAge.grid(row=1, column=0, sticky='ew')
+        self.cbWhichAge.configure(width=15)
+        self.cbWhichAge.configure(takefocus="")
+        self.cbWhichAge.configure(state=DISABLED)
+        self.cbWhichAge.configure(values=('From lesser error', 'Fixed Limit', '207Pb/206Pb', '206Pb/238U'))
+        self.cbWhichAge.current(0)
+        self.cbWhichAge.bind('<<ComboboxSelected>>', lambda event:gui_support.onChange(3,
+                                                                                       self.cbWhichAge.current(),
+                                                                                       pars_onChange,
+                                                                                       self.entAgeCutoff.get(),
+                                                                                       self.entAgeCutoff))
 
-        self.lblPPM = Label(self.frImport)
-        self.lblPPM.grid(row=10, column=2, sticky='se', pady=4)
-        self.apply_style(self.lblPPM)
-        self.lblPPM.configure(text="ppm")
 
-        # _______________frFilter________________________________________________________________________________________
+
+        self.lbPbc = Label(self.frAgeDisc)
+        self.lbPbc.grid(row=5, sticky='ew', pady=10, columnspan=3)
+        self.apply_style(self.lbPbc)
+        self.lbPbc.configure(font=font9)
+        self.lbPbc.configure(state=DISABLED)
+        self.lbPbc.configure(text='Common Pb corr.')
+
+        self.cbPbc = ttk.Combobox(self.frAgeDisc)
+        self.cbPbc.grid(row=6, column=0, sticky='ew')
+        self.cbPbc.configure(width=15)
+        self.cbPbc.configure(takefocus="")
+        self.cbPbc.configure(state=DISABLED)
+        self.cbPbc.configure(values=('None', '204Pbc', '207Pbc', '208Pbc', 'Ander.'))
+        self.cbPbc.current(0)
+        self.cbPbc.bind('<<ComboboxSelected>>', lambda event: gui_support.onChange(4, self.cbPbc.current(), pars_onChange))
+
+
+
+        self.lbCalcDisc = Label(self.frAgeDisc)
+        self.lbCalcDisc.grid(row=7, columnspan=2, sticky='ew', pady=5)
+        self.apply_style(self.lbCalcDisc)
+        self.lbCalcDisc.configure(font=font9)
+        self.lbCalcDisc.configure(state=DISABLED)
+        self.lbCalcDisc.configure(text='How to calc discordance:')
+
+        self.entDiscAgeFixedLim = Spinbox(self.frAgeDisc, from_=0, to=EarthAge)
+        self.entDiscAgeFixedLim.grid(row=8, column=1, pady=5, padx=5, sticky='w')
+        self.entDiscAgeFixedLim.configure(background="white")
+        self.entDiscAgeFixedLim.configure(disabledforeground="#a3a3a3")
+        self.entDiscAgeFixedLim.configure(font="TkFixedFont")
+        self.entDiscAgeFixedLim.configure(foreground="#000000")
+        self.entDiscAgeFixedLim.configure(insertbackground="black")
+        self.entDiscAgeFixedLim.configure(textvariable=gui_support.varDiscCutoff)
+        self.entDiscAgeFixedLim.configure(command=lambda: gui_support.onChange(25, float(self.entDiscAgeFixedLim.get()), pars_onChange))
+        self.entDiscAgeFixedLim.bind('<KeyRelease>', (lambda _: gui_support.onChange(25, float(
+            ''.join(c for c in self.entDiscAgeFixedLim.get() if (c.isdigit() or c == '.'))), pars_onChange)))
+        self.entDiscAgeFixedLim.configure(state=DISABLED)
+        self.entDiscAgeFixedLim.configure(width=5)
+
+        self.lblDiscMa = Label(self.frAgeDisc)
+        self.lblDiscMa.grid(row=8, column=2, sticky='w', pady=5)
+        self.apply_style(self.lblDiscMa)
+        self.lblDiscMa.configure(text="Ma")
+
+        self.cbWhichConc = ttk.Combobox(self.frAgeDisc)
+        self.cbWhichConc.grid(row=8, column=0, sticky='ew')
+        self.cbWhichConc.configure(width=15)
+        self.cbWhichConc.configure(takefocus="")
+        self.cbWhichConc.configure(state=DISABLED)
+
+        self.cbWhichConc.configure(values=('Fixed limit (Ma):', '207/206-206/238', '207/235-206/238', 'Lesser of 2'))
+        self.cbWhichConc.bind('<<ComboboxSelected>>', lambda event: gui_support.onChange(8, self.cbWhichConc.current()+1,
+                                                                                        pars_onChange, self.entDiscAgeFixedLim.get(),
+                                                                                        self.entDiscAgeFixedLim))
+        self.cbWhichConc.current(3)
+
+
+
+
+        # _______________frFilter_________________________________________________________________________________________
         self.frFilter = Frame(self.frOper)
+        self.frFilter.grid(row=0, column=3, sticky='ns')
         self.frFilter.configure(relief=GROOVE)
         self.frFilter.configure(borderwidth="2")
         self.frFilter.configure(relief=GROOVE)
         self.frFilter.configure(background="#d9d9d9")
         self.frFilter.configure(highlightbackground="#d9d9d9")
         self.frFilter.configure(highlightcolor="black")
-        self.frFilter.grid(row=0, column=1, sticky='ns')
 
-        self.lbWhichAge = Label(self.frFilter)
-        self.lbWhichAge.grid(row=0, columnspan=3, sticky='ew')
-        self.apply_style(self.lbWhichAge)
-        self.lbWhichAge.configure(font=font9)
-        self.lbWhichAge.configure(text='''4. Best age: 7/6 or 6/8?''')
-        self.lbWhichAge.configure(state=DISABLED)
+        self.lbDiscFilt = Label(self.frFilter)
+        self.lbDiscFilt.grid(row=0, column=0, columnspan=3, sticky='ew', pady=5)
+        self.apply_style(self.lbDiscFilt)
+        self.lbDiscFilt.configure(font=font9)
+        self.lbDiscFilt.configure(text='Discord. filters (%)')
 
-        self.rbAgeSmallestErr = Radiobutton(self.frFilter)
-        self.rbAgeSmallestErr.configure(variable=gui_support.varAgebased, value=0)
-        self.rbAgeSmallestErr.grid(row=1, sticky='w', pady=5)
-        self.apply_style(self.rbAgeSmallestErr)
-        self.rbAgeSmallestErr.configure(justify=LEFT)
-        self.rbAgeSmallestErr.configure(text='From the lesser error')
-        self.rbAgeSmallestErr.select()
-        self.rbAgeSmallestErr.configure(state=DISABLED)
-        self.rbAgeSmallestErr.configure(command=lambda: gui_support.onChange(3, 0, pars_onChange, self.scAgeCutoff))
+        self.lblMinus = Label(self.frFilter)
+        self.lblMinus.grid(row=1, column=0, sticky='ew', pady=5)
+        self.apply_style(self.lblMinus)
+        self.lblMinus.configure(text="(-)")
 
-        self.rbAgeFixedLim = Radiobutton(self.frFilter)
-        self.rbAgeFixedLim.configure(variable=gui_support.varAgebased, value=1)
-        self.rbAgeFixedLim.grid(row=2, column=0, sticky='sw', pady=5)
-        self.apply_style(self.rbAgeFixedLim)
-        self.rbAgeFixedLim.configure(justify=LEFT)
-        self.rbAgeFixedLim.configure(text='''Fixed limit (Ma):''')
-        self.rbAgeFixedLim.configure(state=DISABLED)
-        self.rbAgeFixedLim.configure(command=lambda: gui_support.onChange(3, 1, pars_onChange, self.scAgeCutoff))
+        self.lblPlus = Label(self.frFilter)
+        self.lblPlus.grid(row=1, column=2, sticky='ew', pady=5)
+        self.apply_style(self.lblPlus)
+        self.lblPlus.configure(text="(+)")
 
-        self.rbAge206_207 = Radiobutton(self.frFilter)
-        self.rbAge206_207.configure(variable=gui_support.varAgebased, value=2)
-        self.rbAge206_207.grid(row=3, sticky='w')
-        self.apply_style(self.rbAge206_207)
-        self.rbAge206_207.configure(justify=LEFT)
-        self.rbAge206_207.configure(text='''206Pb/207Pb''')
-        self.rbAge206_207.configure(state=DISABLED)
-        self.rbAge206_207.configure(command=lambda: gui_support.onChange(3, 2, pars_onChange, self.scAgeCutoff))
+        self.entNegDiscFilt = Spinbox(self.frFilter, from_=0, to=1000)
+        self.entNegDiscFilt.grid(row=1, column=1,  sticky='w')
+        self.entNegDiscFilt.configure(background="white")
+        self.entNegDiscFilt.configure(disabledforeground="#a3a3a3")
+        self.entNegDiscFilt.configure(font="TkFixedFont")
+        self.entNegDiscFilt.configure(foreground="#000000")
+        self.entNegDiscFilt.configure(insertbackground="black")
+        self.entNegDiscFilt.configure(textvariable=gui_support.varNegDiscFilter)
+        self.entNegDiscFilt.configure(command=lambda:gui_support.onChange(7, float(self.entNegDiscFilt.get() ), pars_onChange))
+        self.entNegDiscFilt.bind('<KeyRelease>', (lambda _: gui_support.onChange(7, float(
+            ''.join(c for c in self.entNegDiscFilt.get() if (c.isdigit() or c == '.'))), pars_onChange)))
+        self.entNegDiscFilt.configure(state=DISABLED)
+        self.entNegDiscFilt.configure(width=3)
 
-        self.rbAge206_238 = Radiobutton(self.frFilter)
-        self.rbAge206_238.configure(variable=gui_support.varAgebased, value=3)
-        self.rbAge206_238.grid(row=4, sticky='w', pady=10)
-        self.apply_style(self.rbAge206_238)
-        self.rbAge206_238.configure(justify=LEFT)
-        self.rbAge206_238.configure(text='''206Pb/238U''')
-        self.rbAge206_238.configure(state=DISABLED)
-        self.rbAge206_238.configure(command=lambda: gui_support.onChange(3, 3, pars_onChange, self.scAgeCutoff))
-
-        self.scAgeCutoff = Scale(self.frFilter)
-        self.scAgeCutoff.grid(row=1, column=1, sticky='ews', rowspan=2, pady=5)
-        self.scAgeCutoff.configure(activebackground="#d9d9d9")
-        self.scAgeCutoff.configure(sliderlength=20)
-        self.scAgeCutoff.configure(background="#d9d9d9")
-        self.scAgeCutoff.configure(font="TkTextFont")
-        self.scAgeCutoff.configure(foreground="#000000")
-        self.scAgeCutoff.configure(highlightbackground="#d9d9d9")
-        self.scAgeCutoff.configure(highlightcolor="black")
-        self.scAgeCutoff.configure(length="100")
-        self.scAgeCutoff.configure(orient="horizontal")
-        self.scAgeCutoff.configure(tickinterval="0")
-        self.scAgeCutoff.configure(to="3000")
-        self.scAgeCutoff.configure(bd=2)
-        self.scAgeCutoff.set(1000)
-        self.scAgeCutoff.configure(state=DISABLED)
-        self.scAgeCutoff.configure(
-            command=lambda x: gui_support.onChange(19, self.scAgeCutoff.get(), pars_onChange))
-        self.scAgeCutoff.configure(troughcolor="#d9d9d9")
-
-        self.lbPbc = Label(self.frFilter)
-        self.lbPbc.grid(row=5, sticky='ew', pady=10, columnspan=3)
-        self.apply_style(self.lbPbc)
-        self.lbPbc.configure(font=font9)
-        self.lbPbc.configure(state=DISABLED)
-        self.lbPbc.configure(text='''5. Uncorr. or Pbc?''')
-
-        self.rbUseUncorr = Radiobutton(self.frFilter)
-        self.rbUseUncorr.configure(variable=gui_support.varUncorrOrPbc, value=False)
-        self.rbUseUncorr.grid(row=6, sticky='w')
-        self.apply_style(self.rbUseUncorr)
-        self.rbUseUncorr.configure(justify=LEFT)
-        self.rbUseUncorr.configure(text='''Uncorr. for Pbc''')
-        self.rbUseUncorr.configure(state=DISABLED)
-        self.rbUseUncorr.configure(command=lambda: gui_support.onChange(4, False, pars_onChange))
-        self.rbUseUncorr.select()
-
-        self.rbUseCorr = Radiobutton(self.frFilter)
-        self.rbUseCorr.grid(row=7, sticky='w')
-        self.rbUseCorr.configure(variable=gui_support.varUncorrOrPbc, value=True)
-        self.apply_style(self.rbUseCorr)
-        self.rbUseCorr.configure(justify=LEFT)
-        self.rbUseCorr.configure(state=DISABLED)
-        self.rbUseCorr.configure(command=lambda: gui_support.onChange(4, True, pars_onChange))
-        self.rbUseCorr.configure(text='''Pbc-corr.''')
-
-        self.cbTypePbc = ttk.Combobox(self.frFilter)
-        self.cbTypePbc.grid(row=8, sticky='ew')
-        self.cbTypePbc.configure(textvariable=gui_support.varTypePbc)
-        self.cbTypePbc.configure(width=15)
-        self.cbTypePbc.configure(takefocus="")
-        self.cbTypePbc.configure(state=DISABLED)
-        self.cbTypePbc.configure(state="readonly", values=('204-corr', '207-corr', '208-corr', 'Andersen'))
-        self.cbTypePbc.current(0)
+        self.entPosDiscFilt = Spinbox(self.frFilter, from_=0, to=1000)
+        self.entPosDiscFilt.grid(row=1, column=3, sticky='w')
+        self.entPosDiscFilt.configure(background="white")
+        self.entPosDiscFilt.configure(disabledforeground="#a3a3a3")
+        self.entPosDiscFilt.configure(font="TkFixedFont")
+        self.entPosDiscFilt.configure(foreground="#000000")
+        self.entPosDiscFilt.configure(insertbackground="black")
+        self.entPosDiscFilt.configure(textvariable=gui_support.varPosDiscFilter)
+        self.entPosDiscFilt.configure(
+            command=lambda: gui_support.onChange(6, float(self.entPosDiscFilt.get()), pars_onChange))
+        self.entPosDiscFilt.bind('<KeyRelease>', (lambda _: gui_support.onChange(6, float(
+            ''.join(c for c in self.entPosDiscFilt.get() if (c.isdigit() or c == '.'))), pars_onChange)))
+        self.entPosDiscFilt.configure(state=DISABLED)
+        self.entPosDiscFilt.configure(width=3)
 
         self.lbFilterByError = Label(self.frFilter)
-        self.lbFilterByError.grid(row=9, columnspan=3, pady=10, sticky='ew')
+        self.lbFilterByError.grid(row=3, columnspan=3, pady=5, sticky='ew')
         self.apply_style(self.lbFilterByError)
         self.lbFilterByError.configure(font=font9)
         self.lbFilterByError.configure(state=DISABLED)
-        self.lbFilterByError.configure(text='''6. Filter by error?''')
+        self.lbFilterByError.configure(text='Filter by error:')
 
-        self.rbNoErrFilter = Radiobutton(self.frFilter)
-        self.rbNoErrFilter.configure(variable=gui_support.varErrFilter, value=False)
-        self.rbNoErrFilter.grid(row=10, sticky='w')
-        self.apply_style(self.rbNoErrFilter)
-        self.rbNoErrFilter.configure(justify=LEFT)
-        self.rbNoErrFilter.configure(state=DISABLED)
-        self.rbNoErrFilter.configure(command=lambda: gui_support.onChange(5, False, pars_onChange,
-                                                                          self.chbInclude207235Err, self.scErrFilter))
-        self.rbNoErrFilter.configure(text='''Don't filter''')
-        self.rbNoErrFilter.select()
+        self.entErrFilter = Entry(self.frFilter)
+        self.entErrFilter.grid(row=4, column=3, padx=5, sticky='w')
+        self.entErrFilter.configure(background="white")
+        self.entErrFilter.configure(disabledforeground="#a3a3a3")
+        self.entErrFilter.configure(font="TkFixedFont")
+        self.entErrFilter.configure(foreground="#000000")
+        self.entErrFilter.configure(insertbackground="black")
+        self.entErrFilter.configure(textvariable=gui_support.varErrFilter)
+        self.entErrFilter.bind('<KeyRelease>', (lambda _: gui_support.onChange(20, float(
+            ''.join(c for c in self.entErrFilter.get() if (c.isdigit() or c == '.'))), pars_onChange)))
+        self.entErrFilter.configure(width=3)
+        self.entErrFilter.configure(state=DISABLED)
 
-        self.rbUseErrFilter = Radiobutton(self.frFilter)
-        self.rbUseErrFilter.configure(variable=gui_support.varErrFilter, value=True)
-        self.rbUseErrFilter.grid(row=11, column=0, sticky='sw', pady=4)
-        self.apply_style(self.rbUseErrFilter)
-        self.rbUseErrFilter.configure(justify=LEFT)
-        self.rbUseErrFilter.configure(state=DISABLED)
-        self.rbUseErrFilter.configure(text='''Cutoff 'best age' at (%): ''')
-        self.rbUseErrFilter.configure(command=lambda: gui_support.onChange(5, True, pars_onChange,
-                                                                           self.chbInclude207235Err, self.scErrFilter))
+        self.lblErrCutoff = Label(self.frFilter)
+        self.lblErrCutoff.grid(row=4, column=4, sticky='w')
+        self.apply_style(self.lblErrCutoff)
+        self.lblErrCutoff.configure(text="%")
 
-        self.scErrFilter = Scale(self.frFilter)
-        self.scErrFilter.grid(row=10, column=1, sticky='ews', rowspan=2)
-        self.scErrFilter.configure(activebackground="#d9d9d9")
-        self.scErrFilter.configure(sliderlength=20)
-        self.scErrFilter.configure(background="#d9d9d9")
-        self.scErrFilter.configure(font="TkTextFont")
-        self.scErrFilter.configure(foreground="#000000")
-        self.scErrFilter.configure(highlightbackground="#d9d9d9")
-        self.scErrFilter.configure(highlightcolor="black")
-        self.scErrFilter.configure(length="100")
-        self.scErrFilter.configure(orient="horizontal")
-        self.scErrFilter.configure(tickinterval="0")
-        self.scErrFilter.configure(from_="1")
-        self.scErrFilter.configure(to="50")
-        self.scErrFilter.configure(bd=2)
-        self.scErrFilter.set(10)
-        self.scErrFilter.configure(state=DISABLED)
-        self.scErrFilter.configure(troughcolor="#d9d9d9")
-        self.scErrFilter.configure(
-            command=lambda x: gui_support.onChange(20, self.scErrFilter.get(), pars_onChange, g_list_col_names))
+        self.cbErrFilter = ttk.Combobox(self.frFilter)
+        self.cbErrFilter.grid(row=4, column=1, columnspan=2, sticky='w')
+        self.cbErrFilter.configure(width=15)
+        self.cbErrFilter.configure(takefocus="")
+        self.cbErrFilter.configure(state=DISABLED)
+        self.cbErrFilter.configure(values=('Not used', 'Used'))
+        self.cbErrFilter.configure(width=10)
+        self.cbErrFilter.current(0)
+        self.cbErrFilter.bind('<<ComboboxSelected>>',
+                              lambda event: gui_support.onChange(5, self.cbErrFilter.current(),
+                                                                                        pars_onChange,
+                                                                                        self.entErrFilter.get(),
+                                                                                        self.entErrFilter,
+                                                                                        self.chbInclude207235Err))
 
         self.chbInclude207235Err = Checkbutton(self.frFilter)
-        self.chbInclude207235Err.grid(row=12, column=0, sticky='w', pady=5)
+        self.chbInclude207235Err.grid(row=5, column=1, columnspan=3, sticky='w', pady=5)
         self.apply_style(self.chbInclude207235Err)
-        self.chbInclude207235Err.configure(text="include error in 207/235?")
+        self.chbInclude207235Err.configure(text="include 207/235 error")
         self.chbInclude207235Err.configure(justify=LEFT)
         self.chbInclude207235Err.configure(state=DISABLED)
         self.chbInclude207235Err.configure(variable=gui_support.varInclude207235Err)
         self.chbInclude207235Err.configure(command=lambda: gui_support.onChange(22,
                                                                                 gui_support.varInclude207235Err.get(),
-                                                                                pars_onChange,))
-
-
-        '''self.lbFiltCommPb = Label(self.frFilter)
-        self.lbFiltCommPb.grid(row=13, columnspan=3, pady=15, sticky='ew')
-        self.apply_style(self.lbFiltCommPb)
-        self.lbFiltCommPb.configure(font=font9)
-        self.lbFiltCommPb.configure(text='7. Filter by the fraction of common-Pb')
-
-        self.rbNoCommPb = Radiobutton(self.frFilter)
-        self.rbNoCommPb.grid(row=14, column=0, sticky='w')
-        self.apply_style(self.rbNoCommPb)
-        self.rbNoCommPb.configure(font="TkTextFont")
-        self.rbNoCommPb.configure(text="Don't filter")
-        self.rbNoCommPb.select()
-        self.rbNoCommPb.configure(variable=gui_support.varCommPb, value=False)
-        self.rbNoCommPb.configure(command=lambda: gui_support.onChange(24, False, pars_onChange, self.scCommPbCutoff))
-
-        self.rbUseCommPb = Radiobutton(self.frFilter)
-        self.rbUseCommPb.grid(row=15, column=0, sticky='sw')
-        self.apply_style(self.rbUseCommPb)
-        self.rbUseCommPb.configure(text="Cutoff at fraction:")
-        self.rbUseCommPb.configure(variable=gui_support.varCommPb, value=True)
-        self.rbUseCommPb.configure(command=lambda: gui_support.onChange(24, True, pars_onChange, self.scCommPbCutoff))
-
-        self.scCommPbCutoff = Scale(self.frFilter)
-        self.scCommPbCutoff.grid(row=15, column=1)
-        self.scCommPbCutoff.configure(activebackground="#d9d9d9")
-        self.scCommPbCutoff.configure(sliderlength=20)
-        self.scCommPbCutoff.configure(background="#d9d9d9")
-        self.scCommPbCutoff.configure(font="TkTextFont")
-        self.scCommPbCutoff.configure(foreground="#000000")
-        self.scCommPbCutoff.configure(highlightbackground="#d9d9d9")
-        self.scCommPbCutoff.configure(highlightcolor="black")
-        self.scCommPbCutoff.configure(length="100")
-        self.scCommPbCutoff.configure(orient="horizontal")
-        self.scCommPbCutoff.configure(resolution="0.1")
-        self.scCommPbCutoff.configure(from_="0")
-        self.scCommPbCutoff.configure(to="1")
-        self.scCommPbCutoff.configure(bd=2)
-        self.scCommPbCutoff.set(0.1)
-        self.scCommPbCutoff.configure(troughcolor="#d9d9d9")
-        self.scCommPbCutoff.configure(
-            command=lambda x: gui_support.onChange(18, self.scCommPbCutoff.get(), pars_onChange))'''
-
-
-
-
-        # _______________frDisc__________________________________________________________________________________________
-        self.frDisc = Frame(self.frOper)
-        self.frDisc.grid(row=0, column=2, sticky='ns')
-        self.frDisc.configure(relief=GROOVE)
-        self.frDisc.configure(borderwidth="2")
-        self.frDisc.configure(relief=GROOVE)
-        self.frDisc.configure(background="#d9d9d9")
-        self.frDisc.configure(highlightbackground="#d9d9d9")
-        self.frDisc.configure(highlightcolor="black")
-
-
-
-        self.lbDiscFilt = Label(self.frDisc)
-        self.lbDiscFilt.grid(row=3, columnspan=2, sticky='ew')
-        self.apply_style(self.lbDiscFilt)
-        self.lbDiscFilt.configure(font=font9)
-        self.lbDiscFilt.configure(text='''7. Discord. filters (%)''')
-
-        self.lbPosDiscFilt = Label(self.frDisc)
-        self.lbPosDiscFilt.grid(row=4, columnspan=2, sticky='ew')
-        self.apply_style(self.lbPosDiscFilt)
-        self.lbPosDiscFilt.configure(anchor='w')
-        self.lbPosDiscFilt.configure(text='''Positive:''')
-
-        self.scPosDisc = Scale(self.frDisc)
-        self.scPosDisc.grid(row=5, columnspan=2, sticky='ew')
-        self.scPosDisc.configure(variable=gui_support.varPosDiscFilter)
-        self.scPosDisc.configure(activebackground="#d9d9d9")
-        self.scPosDisc.configure(background="#d9d9d9")
-        self.scPosDisc.configure(font="TkTextFont")
-        self.scPosDisc.configure(foreground="#000000")
-        self.scPosDisc.configure(highlightbackground="#d9d9d9")
-        self.scPosDisc.configure(highlightcolor="black")
-        self.scPosDisc.configure(length="50")
-        self.scPosDisc.configure(orient="horizontal")
-        self.scPosDisc.configure(tickinterval="10.0")
-        self.scPosDisc.configure(to="50.0")
-        self.scPosDisc.set(20)
-        self.scPosDisc.configure(troughcolor="#d9d9d9")
-        self.scPosDisc.configure(state=DISABLED)
-        self.scPosDisc.configure(command=lambda x: gui_support.onChange(6, self.scPosDisc.get(), pars_onChange))
-
-        self.lbNegDiscFilt = Label(self.frDisc)
-        self.lbNegDiscFilt.grid(row=6, columnspan=2, sticky='ew')
-        self.apply_style(self.lbNegDiscFilt)
-        self.lbNegDiscFilt.configure(anchor='w')
-        self.lbNegDiscFilt.configure(state=DISABLED)
-        self.lbNegDiscFilt.configure(text='''Negative:''')
-
-        self.scNegDisc = Scale(self.frDisc)
-        self.scNegDisc.grid(row=7, columnspan=2, sticky='ew')
-        self.scNegDisc.configure(variable=gui_support.varNegDiscFilter)
-        self.scNegDisc.configure(activebackground="#d9d9d9")
-        self.scNegDisc.configure(background="#d9d9d9")
-        self.scNegDisc.configure(font="TkTextFont")
-        self.scNegDisc.configure(foreground="#000000")
-        self.scNegDisc.configure(from_="-30.0")
-        self.scNegDisc.configure(highlightbackground="#d9d9d9")
-        self.scNegDisc.configure(highlightcolor="black")
-        self.scNegDisc.configure(length="50")
-        self.scNegDisc.configure(orient="horizontal")
-        self.scNegDisc.configure(tickinterval="10.0")
-        self.scNegDisc.configure(to="0.0")
-        self.scNegDisc.set(-10)
-        self.scNegDisc.configure(state=DISABLED)
-        self.scNegDisc.configure(troughcolor="#d9d9d9")
-        self.scNegDisc.configure(command=lambda x: gui_support.onChange(7, self.scNegDisc.get(), pars_onChange))
-
-        self.lbCalcDisc = Label(self.frDisc)
-        self.lbCalcDisc.grid(row=8, columnspan=2, sticky='ew', pady=15)
-        self.apply_style(self.lbCalcDisc)
-        self.lbCalcDisc.configure(font=font9)
-        self.scNegDisc.configure(state=DISABLED)
-        self.lbCalcDisc.configure(text='8. Discordance between:')
-
-        self.rbDiscSmallest = Radiobutton(self.frDisc)
-        self.rbDiscSmallest.configure(variable=gui_support.varDiscType, value=4)
-        self.rbDiscSmallest.grid(row=9, sticky='sw', pady=5)
-        self.apply_style(self.rbDiscSmallest)
-        self.rbDiscSmallest.configure(justify=LEFT)
-        self.rbDiscSmallest.configure(text='Lesser of 2 (recommended)')
-        self.rbDiscSmallest.select()
-        self.rbDiscSmallest.configure(state=DISABLED)
-        self.rbDiscSmallest.configure(command=lambda: gui_support.onChange(8, 4, pars_onChange,
-                                                                           self.scDiscAgeFixedLim))
-
-        '''self.chbDiscLinked2Age = Checkbutton(self.frDisc)
-        self.chbDiscLinked2Age.grid(row=9, columnspan=2, sticky='w', pady=5)
-        self.apply_style(self.chbDiscLinked2Age)
-        self.chbDiscLinked2Age.configure(text="Linked to the choice in #4")
-        self.chbDiscLinked2Age.configure(justify=LEFT)
-        self.chbDiscLinked2Age.configure(state=DISABLED)
-        self.chbDiscLinked2Age.configure(variable=gui_support.varDiscLinked2Age)
-        self.chbDiscLinked2Age.configure(command=lambda: gui_support.onChange(21, gui_support.varDiscLinked2Age.get(),
-                                                                              pars_onChange,
-                                                                              self.rbDiscUbased,
-                                                                              self.rbDiscAgeFixedLim,
-                                                                              self.rbDisc67_68,
-                                                                              self.rbDisc75_68,
-                                                                              self.scDiscAgeFixedLim,
-                                                                              self.scAgeCutoff,
-                                                                              self.rbDiscSmallest))'''
-
-
-
-        self.rbDiscAgeFixedLim = Radiobutton(self.frDisc)
-        self.rbDiscAgeFixedLim.configure(variable=gui_support.varDiscType, value=1)
-        self.rbDiscAgeFixedLim.grid(row=10, column=0, sticky='ws', pady=5)
-        self.apply_style(self.rbDiscAgeFixedLim)
-        self.rbDiscAgeFixedLim.configure(justify=LEFT)
-        self.rbDiscAgeFixedLim.configure(text='''Fixed limit (Ma):''')
-        self.rbDiscAgeFixedLim.configure(state=DISABLED)
-        self.rbDiscAgeFixedLim.configure(command=lambda: gui_support.onChange(8, 1, pars_onChange,
-                                                                              self.scDiscAgeFixedLim))
-
-        self.scDiscAgeFixedLim = Scale(self.frDisc)
-        self.scDiscAgeFixedLim.grid(row=9, column=1, sticky='ws', rowspan=2)
-        self.scDiscAgeFixedLim.configure(activebackground="#d9d9d9")
-        self.scDiscAgeFixedLim.configure(sliderlength=20)
-        self.scDiscAgeFixedLim.configure(background="#d9d9d9")
-        self.scDiscAgeFixedLim.configure(font="TkTextFont")
-        self.scDiscAgeFixedLim.configure(foreground="#000000")
-        self.scDiscAgeFixedLim.configure(highlightbackground="#d9d9d9")
-        self.scDiscAgeFixedLim.configure(highlightcolor="black")
-        self.scDiscAgeFixedLim.configure(length="100")
-        self.scDiscAgeFixedLim.configure(orient="horizontal")
-        self.scDiscAgeFixedLim.configure(tickinterval="0")
-        self.scDiscAgeFixedLim.configure(to="3000")
-        self.scDiscAgeFixedLim.configure(bd=2)
-        self.scDiscAgeFixedLim.set(1000)
-        self.scDiscAgeFixedLim.configure(state=DISABLED)
-        self.scDiscAgeFixedLim.configure(command=lambda x: gui_support.onChange(25, self.scDiscAgeFixedLim.get(),
                                                                                 pars_onChange))
-        self.scDiscAgeFixedLim.configure(troughcolor="#d9d9d9")
 
-        self.rbDisc67_68 = Radiobutton(self.frDisc)
-        self.rbDisc67_68.configure(variable=gui_support.varDiscType, value=2)
-        self.rbDisc67_68.grid(row=11, sticky='w', pady=5)
-        self.apply_style(self.rbDisc67_68)
-        self.rbDisc67_68.configure(justify=LEFT)
-        self.rbDisc67_68.configure(text='''206/207-238/206''')
-        self.rbDisc67_68.configure(state=DISABLED)
-        self.rbDisc67_68.configure(command=lambda: gui_support.onChange(8, 2, pars_onChange,
-                                                                        self.scDiscAgeFixedLim))
+        self.lbUConcFilter = Label(self.frFilter)
+        self.lbUConcFilter.grid(row=6, column=1, columnspan=3, pady=4, sticky='w')
+        self.apply_style(self.lbUConcFilter)
+        self.lbUConcFilter.configure(font=font9)
+        self.lbUConcFilter.configure(text="Filter by Uconc:")
 
-        self.rbDisc75_68 = Radiobutton(self.frDisc)
-        self.rbDisc75_68.configure(variable=gui_support.varDiscType, value=3)
-        self.rbDisc75_68.grid(row=12, sticky='sw', pady=5)
-        self.apply_style(self.rbDisc75_68)
-        self.rbDisc75_68.configure(justify=LEFT)
-        self.rbDisc75_68.configure(text='''235/207-238/206''')
-        self.rbDisc75_68.configure(state=DISABLED)
-        self.rbDisc75_68.configure(command=lambda: gui_support.onChange(8, 3, pars_onChange,
-                                                                        self.scDiscAgeFixedLim))
+        self.entUconcCutoff = Entry(self.frFilter)
+        self.entUconcCutoff.grid(row=7, column=3, columnspan=2, pady=5, padx=5, sticky='w')
+        self.entUconcCutoff.configure(background="white")
+        self.entUconcCutoff.configure(disabledforeground="#a3a3a3")
+        self.entUconcCutoff.configure(font="TkFixedFont")
+        self.entUconcCutoff.configure(foreground="#000000")
+        self.entUconcCutoff.configure(insertbackground="black")
+        self.entUconcCutoff.configure(textvariable=gui_support.varUConc)
+        self.entUconcCutoff.bind('<KeyRelease>', (lambda _: gui_support.onChange(18, float(
+            ''.join(c for c in self.entUconcCutoff.get() if (c.isdigit() or c == '.'))),
+                                                                               pars_onChange)))
+        self.entUconcCutoff.configure(width=5)
+        self.entUconcCutoff.configure(state=DISABLED)
 
-        '''self.rbDiscUbased = Radiobutton(self.frDisc)
-        self.rbDiscUbased.configure(variable=gui_support.varDiscType, value=0)
-        self.rbDiscUbased.grid(row=13, sticky='w', pady=5)
-        self.apply_style(self.rbDiscUbased)
-        self.rbDiscUbased.configure(justify=LEFT)
-        self.rbDiscUbased.configure(text='Based on U-conc')
-        self.rbDiscUbased.configure(state=DISABLED)
-        self.rbDiscUbased.configure(command=lambda: gui_support.onChange(8, 0, pars_onChange,
-                                                                         self.scDiscAgeFixedLim))'''
+        self.lblUConcCutoff = Label(self.frFilter)
+        self.lblUConcCutoff.grid(row=7, column=5, sticky='w', pady=5)
+        self.apply_style(self.lblUConcCutoff)
+        self.lblUConcCutoff.configure(text="ppm")
 
-        self.lbAgeCrop = Label(self.frDisc)
-        self.lbAgeCrop.grid(row=13, columnspan=2, sticky='ew', pady=5)
-        self.apply_style(self.lbAgeCrop)
-        self.lbAgeCrop.configure(font=font9)
-        self.lbAgeCrop.configure(text='9. Age crop')
+        self.cbUConc = ttk.Combobox(self.frFilter)
+        self.cbUConc.grid(row=7, column=1, sticky='w')
+        self.cbUConc.configure(width=15)
+        self.cbUConc.configure(takefocus="")
+        self.cbUConc.configure(state=DISABLED)
+        self.cbUConc.configure(values=('Not used', 'Used'))
+        self.cbUConc.bind('<<ComboboxSelected>>', lambda event: gui_support.onChange(2, self.cbUConc.current(),
+                                                                                        pars_onChange,
+                                                                                        self.cbUConc.get(),
+                                                                                        self.cbUConc,
+                                                                                        self.entUconcCutoff))
+        self.cbUConc.configure(width=10)
+        self.cbUConc.current(0)
 
-        self.entAgeMinCrop = Entry(self.frDisc)
-        self.entAgeMinCrop.grid(row=14, column=1, pady=5, padx=5, sticky='w')
-        self.entAgeMinCrop.configure(background="white")
-        self.entAgeMinCrop.configure(disabledforeground="#a3a3a3")
-        self.entAgeMinCrop.configure(font="TkFixedFont")
-        self.entAgeMinCrop.configure(foreground="#000000")
-        self.entAgeMinCrop.configure(insertbackground="black")
-        self.entAgeMinCrop.configure(width=5)
-
-        self.chbMinAgeCrop = Checkbutton(self.frDisc)
-        self.chbMinAgeCrop.grid(row=14, column=0, sticky='w', pady=5)
-        self.apply_style(self.chbMinAgeCrop)
-        self.chbMinAgeCrop.configure(text="Min. age crop at (Ma):")
-        self.chbMinAgeCrop.configure(justify=LEFT)
-        self.chbMinAgeCrop.configure(state=DISABLED)
-        self.chbMinAgeCrop.configure(variable=gui_support.varMinAgeCrop)
-        self.chbMinAgeCrop.configure(command=lambda: gui_support.onChange(26, self.entAgeMinCrop.get(), pars_onChange,
-                                                                          self.entAgeMinCrop))
-
-        self.entAgeMaxCrop = Entry(self.frDisc)
-        self.entAgeMaxCrop.grid(row=15, column=1, pady=5, padx=5, sticky='w')
-        self.entAgeMaxCrop.configure(background="white")
-        self.entAgeMaxCrop.configure(disabledforeground="#a3a3a3")
-        self.entAgeMaxCrop.configure(font="TkFixedFont")
-        self.entAgeMaxCrop.configure(foreground="#000000")
-        self.entAgeMaxCrop.configure(insertbackground="black")
-        self.entAgeMaxCrop.configure(width=5)
-
-        self.chbMaxAgeCrop = Checkbutton(self.frDisc)
-        self.chbMaxAgeCrop.grid(row=15, column=0, sticky='w', pady=5)
-        self.apply_style(self.chbMaxAgeCrop)
-        self.chbMaxAgeCrop.configure(text="Max. age crop at (Ma):")
-        self.chbMaxAgeCrop.configure(justify=LEFT)
-        self.chbMaxAgeCrop.configure(state=DISABLED)
-        self.chbMaxAgeCrop.configure(variable=gui_support.varMaxAgeCrop)
-        self.chbMaxAgeCrop.configure(command=lambda: gui_support.onChange(27, self.entAgeMaxCrop.get(), pars_onChange,
-                                                                          self.entAgeMaxCrop))
 
 
         # _______________frGraphSettings_________________________________________________________________________________
@@ -752,59 +655,47 @@ class OperationWindow(Frame):
         self.frGraphSettings.configure(background="#d9d9d9")
         self.frGraphSettings.configure(highlightbackground="#d9d9d9")
         self.frGraphSettings.configure(highlightcolor="black")
-        self.frGraphSettings.grid(row=0, column=3, sticky="ns")
+        self.frGraphSettings.grid(row=0, column=4, sticky="ns")
 
         self.lbConc = Label(self.frGraphSettings)
-        self.lbConc.grid(row=0, columnspan=4, sticky='ew')
+        self.lbConc.grid(row=0, columnspan=4, pady=5, sticky='ew')
         self.apply_style(self.lbConc)
         self.lbConc.configure(font=font9)
-        self.lbConc.configure(text='10. Concordia')
+        self.lbConc.configure(text='Concordia settings:')
 
         self.lbConcType = Label(self.frGraphSettings)
         self.lbConcType.grid(row=1, column=0, pady=5, sticky='w')
         self.apply_style(self.lbConcType)
-        self.lbConcType.configure(text='Conc.type:')
+        self.lbConcType.configure(text='Conc. type:')
 
-        self.rbStdConc = Radiobutton(self.frGraphSettings)
-        self.rbStdConc.configure(variable=gui_support.varConcType, value=0)
-        self.rbStdConc.grid(row=1, column=1, pady=5, sticky='w')
-        self.apply_style(self.rbStdConc)
-        self.rbStdConc.configure(justify=LEFT)
-        self.rbStdConc.configure(text='Standard')
-        self.rbStdConc.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 0, 0))
-        self.rbStdConc.select()
-
-        self.rbTerWassConc = Radiobutton(self.frGraphSettings)
-        self.rbTerWassConc.configure(variable=gui_support.varConcType, value=1)
-        self.rbTerWassConc.grid(row=1, column=2, pady=5, sticky='w')
-        self.apply_style(self.rbTerWassConc)
-        self.rbTerWassConc.configure(justify=LEFT)
-        self.rbTerWassConc.configure(text='Ter-Wass.')
-        self.rbTerWassConc.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 0, 1))
+        self.cbConcType = ttk.Combobox(self.frGraphSettings)
+        self.cbConcType.grid(row=1, column=1, sticky='w')
+        self.cbConcType.configure(width=15)
+        self.cbConcType.configure(takefocus="")
+        self.cbConcType.configure(state=DISABLED)
+        self.cbConcType.configure(values=('Standard', 'Tera-Wass.'))
+        self.cbConcType.bind('<<ComboboxSelected>>', lambda event: gui_support.onGraphChange(g_graph_settings, 0,
+                                                                                             self.cbConcType.current()))
+        self.cbConcType.config(width=8)
+        self.cbConcType.current(0)
 
         self.lbEclipsesAt = Label(self.frGraphSettings)
-        self.lbEclipsesAt.grid(row=3, column=0, pady=5, sticky='w')
+        self.lbEclipsesAt.grid(row=1, column=2, pady=5, padx=5, sticky='w')
         self.apply_style(self.lbEclipsesAt)
-        self.lbEclipsesAt.configure(text='Eclipses at:')
+        self.lbEclipsesAt.configure(text='Eclipses at')
 
-        self.rbEcl1Sigma = Radiobutton(self.frGraphSettings)
-        self.rbEcl1Sigma.configure(variable=gui_support.varEclipseSigma, value=1)
-        self.rbEcl1Sigma.grid(row=3, column=1, columnspan=4, pady=5, sticky='w')
-        self.apply_style(self.rbEcl1Sigma)
-        self.rbEcl1Sigma.configure(justify=LEFT)
-        self.rbEcl1Sigma.configure(text='1σ')
-        self.rbEcl1Sigma.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 2, 1))
-        self.rbEcl1Sigma.select()
+        self.cbEclipsesAt = ttk.Combobox(self.frGraphSettings)
+        self.cbEclipsesAt.grid(row=1, column=3, padx=5, sticky='w')
+        self.cbEclipsesAt.configure(width=5)
+        self.cbEclipsesAt.configure(takefocus="")
+        self.cbEclipsesAt.configure(state=DISABLED)
+        self.cbEclipsesAt.configure(values=('1σ', '2σ'))
+        self.cbEclipsesAt.bind('<<ComboboxSelected>>',
+                             lambda event: gui_support.onGraphChange(g_graph_settings, 2, self.cbEclipsesAt.current()+1))
+        self.cbEclipsesAt.config(width=3)
+        self.cbEclipsesAt.current(0)
 
-        self.rbEcl2Sigma = Radiobutton(self.frGraphSettings)
-        self.rbEcl2Sigma.configure(variable=gui_support.varEclipseSigma, value=2)
-        self.rbEcl2Sigma.grid(row=3, column=2, pady=5, sticky='w')
-        self.apply_style(self.rbEcl2Sigma)
-        self.rbEcl2Sigma.configure(justify=LEFT)
-        self.rbEcl2Sigma.configure(text='2σ')
-        self.rbEcl2Sigma.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 2, 2))
-
-        self.chbFitDiscordia = Checkbutton(self.frGraphSettings)
+        '''self.chbFitDiscordia = Checkbutton(self.frGraphSettings)
         self.chbFitDiscordia.grid(row=5, pady=5, sticky='w')
         self.apply_style(self.chbFitDiscordia)
         self.chbFitDiscordia.configure(justify=LEFT)
@@ -827,95 +718,128 @@ class OperationWindow(Frame):
         self.entAnchoredAge.configure(font="TkFixedFont")
         self.entAnchoredAge.configure(foreground="#000000")
         self.entAnchoredAge.configure(insertbackground="black")
-        self.entAnchoredAge.configure(width=5)
+        self.entAnchoredAge.configure(width=5)'''
 
-        self.lbKdePdpHist = Label(self.frGraphSettings)
-        self.lbKdePdpHist.grid(row=7, columnspan=3, pady=15, sticky='ew')
-        self.apply_style(self.lbKdePdpHist)
-        self.lbKdePdpHist.configure(font=font9)
-        self.lbKdePdpHist.configure(text='11. KDE/PDP/Hist')
+        self.lbDensityPlot = Label(self.frGraphSettings)
+        self.lbDensityPlot.grid(row=2, columnspan=3, pady=5, sticky='ew')
+        self.apply_style(self.lbDensityPlot)
+        self.lbDensityPlot.configure(font=font9)
+        self.lbDensityPlot.configure(text='Density plot:')
 
-        self.rbDrawKDE = Radiobutton(self.frGraphSettings)
-        self.rbDrawKDE.configure(variable=gui_support.var_pdp_kde_hist, value=0)
-        self.rbDrawKDE.grid(row=8, column=0, pady=5, sticky='e')
-        self.apply_style(self.rbDrawKDE)
-        self.rbDrawKDE.configure(text='KDE')
-        self.rbDrawKDE.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 7, 0))
-        self.rbDrawKDE.select()
+        self.lbDensityPlotType = Label(self.frGraphSettings)
+        self.lbDensityPlotType.grid(row=3, column=0, pady=5, sticky='w')
+        self.apply_style(self.lbDensityPlotType)
+        self.lbDensityPlotType.configure(text='Type:')
 
-        self.rbDrawPdp = Radiobutton(self.frGraphSettings)
-        self.rbDrawPdp.configure(variable=gui_support.var_pdp_kde_hist, value=1)
-        self.rbDrawPdp.grid(row=8, column=1, pady=5, sticky='ew')
-        self.apply_style(self.rbDrawPdp)
-        self.rbDrawPdp.configure(text='PDP')
-        self.rbDrawPdp.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 8, 1))
+        self.entKDEBandwidth = Spinbox(self.frGraphSettings, from_=1, to=3000)
+        self.entKDEBandwidth.grid(row=3, column=3, pady=5, padx=5, sticky='w')
+        self.entKDEBandwidth.configure(background="white")
+        self.entKDEBandwidth.configure(disabledforeground="#a3a3a3")
+        self.entKDEBandwidth.configure(font="TkFixedFont")
+        self.entKDEBandwidth.configure(foreground="#000000")
+        self.entKDEBandwidth.configure(insertbackground="black")
+        self.entKDEBandwidth.configure(textvariable=gui_support.varKDEBandwidth)
+        self.entKDEBandwidth.configure(width=5)
+        self.entKDEBandwidth.configure(state=DISABLED)
+        self.entKDEBandwidth.configure(width=5)
+        self.entKDEBandwidth.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 11, float(self.entKDEBandwidth.get())))
+        self.entKDEBandwidth.bind('<KeyRelease>', (lambda _: gui_support.onGraphChange(g_graph_settings, 11,
+                                                                                       float(''.join(c for c in
+                                                                                                     self.entKDEBandwidth.get()
+                                                                                                     if (c.isdigit() or c == '.'))))))
 
-        self.rbDrawHist = Radiobutton(self.frGraphSettings)
-        self.rbDrawHist.configure(variable=gui_support.var_pdp_kde_hist, value=2)
-        self.rbDrawHist.grid(row=8, column=2, pady=5, sticky='w')
-        self.apply_style(self.rbDrawHist)
-        self.rbDrawHist.configure(text='Hist.')
-        self.rbDrawHist.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 8, 2))
 
-        self.scBandwidth = Scale(self.frGraphSettings)
-        self.scBandwidth.grid(row=9, columnspan=4, sticky='ew')
-        self.scBandwidth.configure(activebackground="#d9d9d9")
-        self.scBandwidth.configure(background="#d9d9d9")
-        self.scBandwidth.configure(font="TkTextFont")
-        self.scBandwidth.configure(foreground="#000000")
-        self.scBandwidth.configure(highlightbackground="#d9d9d9")
-        self.scBandwidth.configure(highlightcolor="black")
-        self.scBandwidth.configure(length="20")
-        self.scBandwidth.configure(label="KDE's bandwidth (Ma):")
-        self.scBandwidth.configure(orient="horizontal")
-        self.scBandwidth.configure(from_="1")
-        self.scBandwidth.configure(tickinterval="499")
-        self.scBandwidth.configure(to="500")
-        self.scBandwidth.configure(bd=2)
-        self.scBandwidth.set(50)
-        self.scBandwidth.configure(troughcolor="#d9d9d9")
-        self.scBandwidth.configure(command=lambda x: gui_support.onGraphChange(g_graph_settings, 11,
-                                                                                       self.scBandwidth.get()))
 
-        self.scBinwidth = Scale(self.frGraphSettings)
-        self.scBinwidth.grid(row=10, columnspan=4, sticky='ew')
-        self.scBinwidth.configure(activebackground="#d9d9d9")
-        self.scBinwidth.configure(background="#d9d9d9")
-        self.scBinwidth.configure(font="TkTextFont")
-        self.scBinwidth.configure(foreground="#000000")
-        self.scBinwidth.configure(highlightbackground="#d9d9d9")
-        self.scBinwidth.configure(highlightcolor="black")
-        self.scBinwidth.configure(length="20")
-        self.scBinwidth.configure(label="Histogram bin width (Ma):")
-        self.scBinwidth.configure(orient="horizontal")
-        self.scBinwidth.configure(from_="1")
-        self.scBinwidth.configure(tickinterval="999")
-        self.scBinwidth.configure(to="1000")
-        self.scBinwidth.configure(bd=2)
-        self.scBinwidth.set(50)
-        self.scBinwidth.configure(troughcolor="#d9d9d9")
-        self.scBinwidth.configure(command=lambda x: gui_support.onGraphChange(g_graph_settings, 12,
-                                                                                      self.scBinwidth.get()))
+        self.entHistBinwidth = Spinbox(self.frGraphSettings, from_=1, to=3000)
+        self.entHistBinwidth.grid(row=4, column=3, pady=5, padx=5, sticky='w')
+        self.entHistBinwidth.configure(background="white")
+        self.entHistBinwidth.configure(disabledforeground="#a3a3a3")
+        self.entHistBinwidth.configure(font="TkFixedFont")
+        self.entHistBinwidth.configure(foreground="#000000")
+        self.entHistBinwidth.configure(insertbackground="black")
+        self.entHistBinwidth.configure(textvariable=gui_support.varHistBinwidth)
+        self.entHistBinwidth.configure(width=5)
+        self.entHistBinwidth.configure(state=DISABLED)
+        self.entHistBinwidth.configure(width=5)
+        self.entHistBinwidth.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 12, float(self.entHistBinwidth.get())))
+        self.entHistBinwidth.bind('<KeyRelease>', (lambda _: gui_support.onGraphChange(g_graph_settings, 12,
+                                                                                       float(''.join(c for c in
+                                                                                                     self.entHistBinwidth.get()
+                                                                                                     if (c.isdigit() or c == '.'))))))
 
-        self.cbKeepPrev = Checkbutton(self.frGraphSettings)
-        self.cbKeepPrev.grid(row=11, column=0, pady=5, sticky='ew')
-        self.apply_style(self.cbKeepPrev)
-        self.cbKeepPrev.configure(justify=LEFT)
-        self.cbKeepPrev.configure(text='''Keep prev.''')
-        self.cbKeepPrev.configure(variable=gui_support.varKeepPrev)
-        self.cbKeepPrev.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 13,
-                                                                              gui_support.varKeepPrev,
-                                                                              self.cbLimitAgeSpectrum))
 
-        self.cbLimitAgeSpectrum = Checkbutton(self.frGraphSettings)
-        self.cbLimitAgeSpectrum.grid(row=11, column=1, pady=5, sticky='ew')
-        self.apply_style(self.cbLimitAgeSpectrum)
-        self.cbLimitAgeSpectrum.configure(justify=LEFT)
-        self.cbLimitAgeSpectrum.configure(text='''Zoom to ages''')
-        self.cbLimitAgeSpectrum.configure(variable=gui_support.varLimitAgeSpectrum)
-        self.cbLimitAgeSpectrum.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 13,
-                                                                              gui_support.varLimitAgeSpectrum,
-                                                                              self.cbKeepPrev))
+
+
+
+
+        self.cbDensityPlotType = ttk.Combobox(self.frGraphSettings)
+        self.cbDensityPlotType.grid(row=3, column=1, sticky='w')
+        self.cbDensityPlotType.configure(takefocus="")
+        self.cbDensityPlotType.configure(state=DISABLED)
+        self.cbDensityPlotType.configure(values=('KDE', 'PDP', 'Histogram'))
+        self.cbDensityPlotType.bind('<<ComboboxSelected>>',
+                               lambda event: gui_support.onGraphChange(g_graph_settings, 7,
+                                                                       self.cbDensityPlotType.current(),
+                                                                       self.entKDEBandwidth, self.entHistBinwidth))
+        self.cbDensityPlotType.config(width=7)
+        self.cbDensityPlotType.current(0)
+
+        self.lbKDEBandwidth = Label(self.frGraphSettings)
+        self.lbKDEBandwidth.grid(row=3, column=2, pady=5, sticky='w')
+        self.apply_style(self.lbKDEBandwidth)
+        self.lbKDEBandwidth.configure(text='Bandwidth')
+
+
+        self.lbHistBinwidth = Label(self.frGraphSettings)
+        self.lbHistBinwidth.grid(row=4, column=2, pady=5, sticky='w')
+        self.apply_style(self.lbHistBinwidth)
+        self.lbHistBinwidth.configure(text='Bin width:')
+
+        self.lbAgeCrop = Label(self.frGraphSettings)
+        self.lbAgeCrop.grid(row=5, columnspan=4, sticky='ew', pady=5)
+        self.apply_style(self.lbAgeCrop)
+        self.lbAgeCrop.configure(font=font9)
+        self.lbAgeCrop.configure(text='Age crop:')
+
+        self.entAgeMinCrop = Spinbox(self.frGraphSettings, from_=1, to=EarthAge)
+        self.entAgeMinCrop.grid(row=6, column=1, pady=5, sticky='w')
+        self.entAgeMinCrop.configure(background="white")
+        self.entAgeMinCrop.configure(disabledforeground="#a3a3a3")
+        self.entAgeMinCrop.configure(font="TkFixedFont")
+        self.entAgeMinCrop.configure(foreground="#000000")
+        self.entAgeMinCrop.configure(insertbackground="black")
+        self.entAgeMinCrop.configure(width=5)
+
+        self.chbMinAgeCrop = Checkbutton(self.frGraphSettings)
+        self.chbMinAgeCrop.grid(row=6, column=0, sticky='w', pady=5)
+        self.apply_style(self.chbMinAgeCrop)
+        self.chbMinAgeCrop.configure(text="Min age:")
+        self.chbMinAgeCrop.configure(justify=LEFT)
+        self.chbMinAgeCrop.configure(state=DISABLED)
+        self.chbMinAgeCrop.configure(variable=gui_support.varMinAgeCrop)
+        self.chbMinAgeCrop.configure(command=lambda: gui_support.onChange(26, self.entAgeMinCrop.get(), pars_onChange,
+                                                                          self.entAgeMinCrop))
+
+        self.entAgeMaxCrop = Spinbox(self.frGraphSettings, from_=1, to=EarthAge)
+        self.entAgeMaxCrop.grid(row=6, column=3, pady=5, sticky='w')
+        self.entAgeMaxCrop.configure(background="white")
+        self.entAgeMaxCrop.configure(disabledforeground="#a3a3a3")
+        self.entAgeMaxCrop.configure(font="TkFixedFont")
+        self.entAgeMaxCrop.configure(foreground="#000000")
+        self.entAgeMaxCrop.configure(insertbackground="black")
+        self.entAgeMaxCrop.configure(width=5)
+
+        self.chbMaxAgeCrop = Checkbutton(self.frGraphSettings)
+        self.chbMaxAgeCrop.grid(row=6, column=2, sticky='w', pady=5)
+        self.apply_style(self.chbMaxAgeCrop)
+        self.chbMaxAgeCrop.configure(text="Max age:")
+        self.chbMaxAgeCrop.configure(justify=LEFT)
+        self.chbMaxAgeCrop.configure(state=DISABLED)
+        self.chbMaxAgeCrop.configure(variable=gui_support.varMaxAgeCrop)
+        self.chbMaxAgeCrop.configure(command=lambda: gui_support.onChange(27, self.entAgeMaxCrop.get(), pars_onChange,
+                                                                          self.entAgeMaxCrop))
+
+
 
         # _________________frStatus_________________________________________________________________________________________
         self.frStatus = Frame(master)
@@ -923,191 +847,69 @@ class OperationWindow(Frame):
         self.frStatus.configure(borderwidth="2")
         self.frStatus.configure(relief=GROOVE)
         self.frStatus.configure(background="#d9d9d9")
-        self.frStatus.grid(row=2, column=0, sticky='ew')
+        self.frStatus.grid(row=4, columnspan=3, sticky='ew')
 
-        self.btnDraw = Button(self.frStatus)
-        self.btnDraw.grid(column=4, row=0, sticky='e', padx=5, pady=6)
-        self.apply_style(self.btnDraw)
-        self.btnDraw.configure(text="(Re-)Draw")
-        self.btnDraw.configure(height=2)
-        self.btnDraw.configure(width=20)
-        self.btnDraw.configure(command=lambda: self.clear_and_plot())
+        self.btnCalcWindow = Button(self.frStatus)
+        self.btnCalcWindow.grid(column=4, row=0, rowspan=2, sticky='e', padx=5, pady=6)
+        self.apply_style(self.btnCalcWindow)
+        self.btnCalcWindow.configure(text="Statistics")
+        self.btnCalcWindow.configure(height=2)
+        self.btnCalcWindow.configure(width=20)
+        self.btnCalcWindow.configure(command=lambda: self.show_frame())
 
         self.btnClear = Button(self.frStatus)
-        self.btnClear.grid(column=3, row=0, sticky='e', padx=5, pady=6)
+        self.btnClear.grid(column=3, row=0, rowspan=2, sticky='e', padx=5, pady=6)
         self.apply_style(self.btnClear)
-        self.btnClear.configure(text='''Clear graph''')
+        self.btnClear.configure(text='Clear graph')
         self.btnClear.configure(height=2)
         self.btnClear.configure(width=20)
         self.btnClear.configure(command=lambda: self.clear_graph())
 
         self.btnExport = Button(self.frStatus)
-        self.btnExport.grid(column=2, row=0, sticky='e', padx=5, pady=6)
+        self.btnExport.grid(column=2, row=0, rowspan=2, sticky='e', padx=5, pady=6)
         self.apply_style(self.btnExport)
-        self.btnExport.configure(text='''Export table''')
+        self.btnExport.configure(text='Export table')
         self.btnExport.configure(width=20)
         self.btnExport.configure(height=2)
         self.btnExport.configure(command=lambda: self.export_dialog())
 
         self.cbShowCalc = Checkbutton(self.frStatus)
-        self.cbShowCalc.grid(row=0, column=5, pady=5, padx = 5, sticky='ew')
+        self.cbShowCalc.grid(row=0, column=5, padx=5, sticky='w')
         self.apply_style(self.cbShowCalc)
         self.cbShowCalc.configure(justify=LEFT)
-        self.cbShowCalc.configure(text='''Show peaks?''')
+        self.cbShowCalc.configure(text='Show peaks and stat.')
         self.cbShowCalc.configure(variable=gui_support.varShowCalc)
-        self.cbShowCalc.configure(command=lambda: self.plot_text(set_pval_dval()[0], set_pval_dval()[1]))
+        self.cbShowCalc.configure(command=lambda: self.plot_text(g_pval_dval[0], g_pval_dval[1]))
 
-        self.btnCalcWindow = Button(self.frStatus)
-        self.btnCalcWindow.grid(column=6, row=0, sticky='e', padx=5, pady=6)
-        self.apply_style(self.btnCalcWindow)
-        self.btnCalcWindow.configure(text="Calculations")
-        self.btnCalcWindow.configure(height=2)
-        self.btnCalcWindow.configure(width=20)
-        self.btnCalcWindow.configure(command=lambda: self.show_frame())
+        self.cbKeepPrev = Checkbutton(self.frStatus)
+        self.cbKeepPrev.grid(row=0, column=6, padx=5, sticky='w')
+        self.apply_style(self.cbKeepPrev)
+        self.cbKeepPrev.configure(justify=LEFT)
+        self.cbKeepPrev.configure(text='Keep prev.')
+        self.cbKeepPrev.configure(variable=gui_support.varKeepPrev)
+        self.cbKeepPrev.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 13,
+                                                                            gui_support.varKeepPrev,
+                                                                            self.cbLimitAgeSpectrum))
 
-        # _____________________frGraph___________________________________________________________________________________
-        self.frGraph = Frame(master)
-        self.frGraph.configure(relief=GROOVE)
-        self.frGraph.configure(borderwidth="2")
-        self.frGraph.configure(relief=GROOVE)
-        self.frGraph.configure(background="#d9d9d9")
-        self.frGraph.configure(highlightbackground="#d9d9d9")
-        self.frGraph.configure(highlightcolor="black")
-        self.frGraph.grid(row=0, column=1, rowspan=3, sticky='nswe')
-        self.frGraph.columnconfigure(0, weight=1)
-        self.frGraph.rowconfigure(0, weight=1)
-        self.frGraph.rowconfigure(1, weight=0)
-        self.frGraph.rowconfigure(2, weight=1)
-        self.frGraph.rowconfigure(3, weight=0)
-        self.frGraph.rowconfigure(4, weight=1)
-        self.frGraph.rowconfigure(5, weight=0)
+        self.cbLimitAgeSpectrum = Checkbutton(self.frStatus)
+        self.cbLimitAgeSpectrum.grid(row=0, column=7, pady=5, columnspan=2, sticky='w')
+        self.apply_style(self.cbLimitAgeSpectrum)
+        self.cbLimitAgeSpectrum.configure(justify=LEFT)
+        self.cbLimitAgeSpectrum.configure(text='Zoom to ages')
+        self.cbLimitAgeSpectrum.configure(variable=gui_support.varLimitAgeSpectrum)
+        self.cbLimitAgeSpectrum.configure(command=lambda: gui_support.onGraphChange(g_graph_settings, 13,
+                                                                                    gui_support.varLimitAgeSpectrum,
+                                                                                    self.cbKeepPrev))
 
-        #______________frCon
-        self.frConc = Frame(self.frGraph)
-        self.frConc.grid(row=0, sticky='nswe')
-        self.frConc.configure(relief=GROOVE)
-        self.frConc.configure(borderwidth="2")
-        self.frConc.configure(relief=GROOVE)
-        self.frConc.configure(background="#d9d9d9")
-        self.frConc.configure(highlightbackground="#d9d9d9")
-        self.frConc.configure(highlightcolor="black")
+        self.btnDraw = Button(self.frStatus)
+        self.btnDraw.grid(column=9, row=0, rowspan=2, sticky='e', padx=5, pady=6)
+        self.apply_style(self.btnDraw)
+        self.btnDraw.configure(text="Plot")
+        self.btnDraw.configure(bg='#00ff80')
+        self.btnDraw.configure(height=2)
+        self.btnDraw.configure(width=20)
+        self.btnDraw.configure(command=lambda: self.clear_and_plot())
 
-        self.fig = Figure(figsize=(6, 2.15), frameon=False)
-        self.ax_conc = self.fig.add_subplot(111)
-        self.ax_conc.axes
-        self.ax_conc.set_xlabel('207Pb/235U')
-        self.ax_conc.set_ylabel('206Pb/238U')
-        self.ax_conc.set_title('Concordia')
-        try:
-            self.ax_conc.plot(list(range(0, EarthAge)), graph_to_draw)
-        except UnboundLocalError:
-            pass
-
-        self.canvas_conc = FigureCanvasTkAgg(self.fig, self.frConc)
-        self.canvas_conc.draw()
-        self.canvas_conc.get_tk_widget().pack(side='top', fill='both', expand=1)
-
-        self.frConcToolbar = Frame(self.frGraph)
-        self.frConcToolbar.grid(row=1, sticky='ew')
-        self.frConcToolbar.configure(relief=GROOVE)
-        self.frConcToolbar.configure(borderwidth="2")
-        self.frConcToolbar.configure(relief=GROOVE)
-        self.frConcToolbar.configure(background="#d9d9d9")
-        self.frConcToolbar.configure(highlightbackground="#d9d9d9")
-        self.frConcToolbar.configure(highlightcolor="black")
-        self.frConcToolbar.configure(width=200)
-
-        # ______________frProb
-        self.frProb = Frame(self.frGraph)
-        self.frProb.grid(row=2, sticky='nswe')
-        self.frProb.configure(relief=GROOVE)
-        self.frProb.configure(borderwidth="2")
-        self.frProb.configure(relief=GROOVE)
-        self.frProb.configure(background="#d9d9d9")
-        self.frProb.configure(highlightbackground="#d9d9d9")
-        self.frProb.configure(highlightcolor="black")
-
-        try:
-            if g_graph_settings.pdp_kde_hist == 0:
-                graph_to_draw = g_grainset.kde(g_graph_settings.bandwidth)
-
-            elif g_graph_settings.pdp_kde_hist == 1:
-                graph_to_draw = g_grainset.pdp(gui_support.varUncType.get())[0]
-        except NameError:
-            pass
-
-        self.fig = Figure(figsize=(6, 2.15), frameon=False)
-        self.ax_prob = self.fig.add_subplot(111)
-        self.ax_prob.axes
-        self.ax_prob.set_title('KDE/PDP/Histogram')
-        self.ax_prob.axes.get_yaxis().set_visible(False)
-        try:
-            self.ax_prob.plot(list(range(0, EarthAge)), graph_to_draw)
-        except UnboundLocalError:
-            pass
-
-        self.canvas_prob = FigureCanvasTkAgg(self.fig, self.frProb)
-        self.canvas_prob.draw()
-        self.canvas_prob.get_tk_widget().pack(side='top', fill='both', expand=1)
-
-        self.frProbToolbar = Frame(self.frGraph)
-        self.frProbToolbar.grid(row=3, sticky='ew')
-        self.frProbToolbar.configure(relief=GROOVE)
-        self.frProbToolbar.configure(borderwidth="2")
-        self.frProbToolbar.configure(relief=GROOVE)
-        self.frProbToolbar.configure(background="#d9d9d9")
-        self.frProbToolbar.configure(highlightbackground="#d9d9d9")
-        self.frProbToolbar.configure(highlightcolor="black")
-        self.frProbToolbar.configure(width=200)
-
-        # ______________frCum
-        self.frCum = Frame(self.frGraph)
-        self.frCum.grid(row=4, sticky='nswe')
-        self.frCum.configure(relief=GROOVE)
-        self.frCum.configure(borderwidth="2")
-        self.frCum.configure(relief=GROOVE)
-        self.frCum.configure(background="#d9d9d9")
-        self.frCum.configure(highlightbackground="#d9d9d9")
-        self.frCum.configure(highlightcolor="black")
-        self.frCum.configure(height=10)
-
-        try:
-            if g_graph_settings.pdp_kde_hist == 0:
-                graph_to_draw = g_grainset.ckde(g_graph_settings.bandwidth)
-
-            elif g_graph_settings.pdp_kde_hist == 1:
-                graph_to_draw = g_grainset.cpdp(gui_support.varUncType.get())
-        except NameError:
-            pass
-
-        self.fig = Figure(figsize=(6, 2.15), frameon=False)
-        self.ax_cum = self.fig.add_subplot(111)
-        self.ax_cum.set_title('Cumulative diagrams')
-        self.ax_cum.axes.get_yaxis().set_visible(False)
-
-        try:
-            self.ax_cum.plot(list(range(0, EarthAge)), graph_to_draw)
-        except UnboundLocalError:
-            pass
-
-        self.canvas_cum = FigureCanvasTkAgg(self.fig, self.frCum)
-        self.canvas_cum.draw()
-        self.canvas_cum.get_tk_widget().pack(side='top', fill='both', expand=1)
-
-        self.frCumToolbar = Frame(self.frGraph)
-        self.frCumToolbar.grid(row=5, sticky='ew')
-        self.frCumToolbar.configure(relief=GROOVE)
-        self.frCumToolbar.configure(borderwidth="2")
-        self.frCumToolbar.configure(relief=GROOVE)
-        self.frCumToolbar.configure(background="#d9d9d9")
-        self.frCumToolbar.configure(highlightbackground="#d9d9d9")
-        self.frCumToolbar.configure(highlightcolor="black")
-        self.frCumToolbar.configure(width=200)
-
-        global toolbarConc, toolbarProb, toolbarCum
-        toolbarConc = NavigationToolbar2Tk(self.canvas_conc, self.frConcToolbar)
-        toolbarProb = NavigationToolbar2Tk(self.canvas_prob, self.frProbToolbar)
-        toolbarCum = NavigationToolbar2Tk(self.canvas_cum, self.frCumToolbar)
 
         #________________Menu___________________________________________________________________________________________
         self.menubar = Menu(master, font="TkMenuFont", bg=_bgcolor, fg=_fgcolor)
@@ -1153,6 +955,7 @@ class OperationWindow(Frame):
     def show_frame(self):#asdf
 
         winCalc = Toplevel()
+        winCalc.resizable(height=None, width=None)
         show_calc_frame(winCalc)
 
 
@@ -1166,7 +969,7 @@ class OperationWindow(Frame):
         obj.configure(highlightbackground="#d9d9d9")
         obj.configure(highlightcolor="black")
 
-    def open_and_load_file(self):
+    def open_and_load_file(self, *args):
         try:
             try:
                 global g_plot_txt, g_directory, g_file_type, g_filters, g_list_col_names, g_list_of_samples, \
@@ -1175,15 +978,26 @@ class OperationWindow(Frame):
                     g_plot_txt.remove()
                 keep_prev = False
                 g_filters.sample_name_filter = []
-                user_file = filedialog.askopenfilename(
-                    initialdir=g_directory, title="Select file", filetypes=(("Text files", "*.txt"),
+
+                #when run as a main app
+
+                # for unit test
+                if args:
+                    user_file = args[0]
+                    keep_prev = args[1]
+
+
+                # when module run directly, not imported
+                else:
+                    user_file = filedialog.askopenfilename(initialdir=g_directory, title="Select file", filetypes=(("Text files", "*.txt"),
                                                                     ("Comma separated values files", "*.csv"),
                                                                     ("All files", "*.*")))
+
                 if user_file != '':
-                    if g_grainset != []:
+                    if g_grainset != [] and not args:
                         keep_prev = messagebox.askyesno("Keep previous data?", "Keep previous data?")
                     g_directory = os.path.split(user_file)[0]
-                    root.title(user_file + ' — De-Zir-teer')
+                    root.title(user_file + ' — Dezirteer: ' + g_dezirteer_version)
                     an_set = []
                     file = imported_file(user_file)
                     g_file_type = file[1]
@@ -1197,11 +1011,15 @@ class OperationWindow(Frame):
                     g_grainset = AnalysesSet(an_set, 'set#1')
                     g_grainset.good_bad_sets(g_filters)
 
+
+
                     pars_onChange = [g_filters, self.Table, g_grainset, g_list_col_names]
 
                     sys.stdout.flush()
                     g_number_of_good_grains = gui_support.fill_data_table(self.Table, g_grainset, g_filters,
                                                                           g_list_col_names)
+
+
 
                     g_list_of_samples = same_sample_set(g_grainset)
                     self.reset_controls(True)
@@ -1232,6 +1050,7 @@ class OperationWindow(Frame):
         self.canvas_cum.draw()
         self.canvas_prob.draw()
         self.btnClear.configure(state=DISABLED)
+        self.btnCalcWindow.configure(state=DISABLED)
         g_plot_txt = ""
 
     def export_dialog(self):
@@ -1244,18 +1063,31 @@ class OperationWindow(Frame):
         gui_support.export_table(g_grainset, g_filters, g_list_col_names, g_graph_settings, file_main, file_prob)
 
     def reset_controls(self, is_data_present):
-        features_custom_state = [self.chbAnchored, self.entAnchoredAge, self.chbFitDiscordia, self.chbInclude207235Err,
-                                 self.scErrFilter, self.scDiscAgeFixedLim, self.scUconcCutoff, self.rbUseUncorr,
-                                 self.rbUseCorr, self.cbTypePbc, self.entAgeMinCrop, self.entAgeMaxCrop]
+        features_custom_state = [self.chbInclude207235Err, self.entAgeMinCrop, self.entAgeMaxCrop, self.entErrFilter,
+                                 self.entUconcCutoff, self.cbUConc, self.cbConcType, self.cbErrFilter, self.cbEclipsesAt, self.cbWhichAge,
+                                 self.cbWhichConc, self.entDiscAgeFixedLim, self.cbPbc, self.entAgeCutoff,
+                                 self.entHistBinwidth, self.cbDensityPlotType]
+                                 #self.rbUseCorr, self.rbUseUncorr, self.cbTypePbc, self.scDiscAgeFixedLim,
+                                 # self.scUconcCutoff, self.scErrFilter, self.chbAnchored, self.entAnchoredAge, self.chbFitDiscordia,
         if is_data_present:
-            for var_frame in (self.frImport, self.frFilter, self.frDisc, self.frGraphSettings, self.frStatus):
+            for var_frame in (self.frImport, self.frAgeDisc, self.frFilter, self.frGraphSettings, self.frStatus):
                 for child in var_frame.winfo_children():
                     if child not in features_custom_state:
                         child.configure(state=NORMAL)
 
-            self.rbDiscSmallest.select()
-            self.rbAgeSmallestErr.select()
-            self.scAgeCutoff.configure(state=DISABLED)
+            self.cbWhichAge.configure(state="readonly")
+            self.cbPbc.configure(state="readonly")
+            self.cbWhichConc.configure(state="readonly")
+            self.cbUConc.configure(state="readonly")
+            self.cbConcType.configure(state="readonly")
+            self.cbEclipsesAt.configure(state="readonly")
+            self.cbDensityPlotType.configure(state="readonly")
+            self.entHistBinwidth.configure(state="disabled")
+            self.entAgeCutoff.configure(state="disabled")
+            self.cbErrFilter.configure(state="readonly")
+            self.cbPbc.configure(state="disabled")
+
+
             self.lboxSamples.delete(0, END)
             for item in g_list_of_samples:
                 self.lboxSamples.insert(END, item.name)
@@ -1268,11 +1100,11 @@ class OperationWindow(Frame):
             self.lbShowStatus.configure(text=g_file_type+status_text, fg=status_color)
         else:
             self.lboxSamples.delete(0, END)
-            for var_frame in (self.frImport, self.frFilter, self.frDisc, self.frGraphSettings, self.frStatus):
+            for var_frame in (self.frImport, self.frAgeDisc, self.frFilter, self.frGraphSettings, self.frStatus):
                 for child in var_frame.winfo_children():
                     child.configure(state=DISABLED)
             self.btnImport.configure(state='normal')
-            self.btnCalcWindow.configure(state='normal')
+            self.btnCalcWindow.configure(state='disabled')
             self.lbImport.configure(state='normal')
             self.lbShowStatus.configure(text="No Data", fg="red")
             for i in self.Table.get_children():
@@ -1293,34 +1125,35 @@ class OperationWindow(Frame):
         global g_plot_txt
 
         if gui_support.varShowCalc.get() == 1:
-            text_to_show = \
-                "n={}\n" \
-                "Min age={}; " \
-                "Max age={}\n" \
-                "WA age={}±{}(2σ int.);" \
-                "±{}(95%conf)\n" \
-                "MSWD={}\n" \
-                "KS p-value={}; " \
-                "d-value={}\n" \
-                "peaks at={}".format(
-                    g_number_of_good_grains[0],
-                    int(g_number_of_good_grains[6]),
-                    int(g_number_of_good_grains[5]),
-                    round((g_number_of_good_grains[1]), 1),
-                    2 * round((g_number_of_good_grains[2]), 1),
-                    round((g_number_of_good_grains[3]), 1),
-                    int(g_number_of_good_grains[4]),
-                    round(pval, 2),
-                    round(dval, 2),
-                    peaks()
-                )
-
+                text_to_show = \
+                "n="+str(g_number_of_good_grains[0]) +"\n" \
+                "Min age="+str(int(g_number_of_good_grains[6]))+"; "\
+                "Max age="+str(int(g_number_of_good_grains[5]))+"\n" \
+                "WA age="+str(round((g_number_of_good_grains[1]), 1))+\
+                "+-"+str(2 * round((g_number_of_good_grains[2]), 1))+"(2σ int.);\n" \
+                "    +-"+str(round((g_number_of_good_grains[3]), 1))+"(95%conf)\n" \
+                "MSWD="+str(round(g_number_of_good_grains[4], 2))+"\n" \
+                "KS p-value="+str(round(pval, 2))+"; " \
+                "d-value="+str(round(dval, 2))+"\n" \
+                "peaks at "
+                i = 1
+                for p in peaks():
+                    if len(peaks()) > 10 and i == 10:
+                        text_to_show += "\n (for more peaks click STATISTICS)"
+                        break
+                    if i < len(peaks()):
+                        text_to_show += str(p)+", "
+                    else:
+                        text_to_show += str(p)
+                    if i % 5 == 0 and i < len(peaks()):
+                        text_to_show += "\n    "
+                    i += 1
         else:
             if g_plot_txt != "":
                 g_plot_txt.remove()
             text_to_show = ""
 
-        g_plot_txt = self.ax_cum.text(0.05, 0.40, text_to_show, transform=self.ax_cum.transAxes)
+        g_plot_txt = self.ax_cum.text(0.05, 0.10, text_to_show, transform=self.ax_cum.transAxes)
         if g_graph_settings.pdp_kde_hist != 2: #if not histogram
             self.plot_peaks()
         self.canvas_cum.draw()
@@ -1329,12 +1162,36 @@ class OperationWindow(Frame):
     def min_max_ages(self):
         # choosing age interval based on user's input
         if gui_support.varLimitAgeSpectrum.get() == 1:
-            min_age = g_number_of_good_grains[6]
-            max_age = g_number_of_good_grains[5]
+            min_age = g_grainset.min_age
+            max_age = g_grainset.max_age
+            '''min_age = g_number_of_good_grains[6]
+            max_age = g_number_of_good_grains[5]'''
+
+            if self.cbConcType.current() == 0:
+                min_conc_x = g_grainset.min_207_235
+                max_conc_x = g_grainset.max_207_235
+
+                min_conc_y = g_grainset.min_206_238
+                max_conc_y = g_grainset.max_206_238
+            else:
+                min_conc_x = g_grainset.min_238_206
+                max_conc_x = g_grainset.max_238_206
+
+                min_conc_y = g_grainset.min_207_206
+                max_conc_y = g_grainset.max_207_206
+
         else:
-            min_age = 1
+            min_age = 0
             max_age = EarthAge
-        return [min_age, max_age]
+            min_conc_x = 0
+            min_conc_y = 0
+            if self.cbConcType.current() == 0:
+                max_conc_x = 100
+                max_conc_y = 1.1
+            else:
+                max_conc_x = 60
+                max_conc_y = 0.7
+        return [min_age, max_age, min_conc_x, max_conc_x, min_conc_y, max_conc_y]
 
     def concordia_type(self):
         # choosing concordia type base on user's input
@@ -1342,51 +1199,60 @@ class OperationWindow(Frame):
             conc_graph_x = [i[1] for i in concordia_table]
             conc_graph_y = [i[0] for i in concordia_table]
             conc_title = "Conventional Concordia"
-            conc_graph_xtitle = "207Pb/235U"
-            conc_graph_ytitle = "206Pb/238U"
+            conc_graph_xtitle = "207/235"
+            conc_graph_ytitle = "206/238"
             xconc = 1
             yconc = 0
         else:  # Tera-Wasserburgh
             conc_graph_x = [(1 / i[0]) for i in concordia_table]
             conc_graph_y = [i[2] for i in concordia_table]
             conc_title = "Tera-Wasserburg Concordia"
-            conc_graph_xtitle = "238U/206Pb"
-            conc_graph_ytitle = "207Pb/206Pb"
+            conc_graph_xtitle = "238/206"
+            conc_graph_ytitle = "207/206"
             xconc = 3
             yconc = 2
         return [conc_graph_x, conc_graph_y, conc_title, conc_graph_xtitle, conc_graph_ytitle, xconc, yconc]
 
     def kde_pdp_hist(self):
         # choosing kde/pdp/hist based on user input
+        global g_ckde, g_cpdp, g_kde, g_pdp, g_prob_graph_to_draw, g_cum_graph_to_draw, g_prob_title, g_cum_title
         if g_graph_settings.pdp_kde_hist == 0:
-            prob_graph_to_draw = g_grainset.kde(g_graph_settings.bandwidth)[0]
-            cum_graph_to_draw = g_grainset.ckde(g_graph_settings.bandwidth)
-            prob_title = "Kernel Density Estimates (KDE)"
-            cum_title = "Cumulative KDE"
+            g_prob_graph_to_draw = g_kde[0]
+            g_cum_graph_to_draw = g_ckde
+            g_prob_title = "Kernel Density Estimates (KDE)"
+            g_cum_title = "Cumulative KDE"
         elif g_graph_settings.pdp_kde_hist == 1:
-            prob_graph_to_draw = g_grainset.pdp(gui_support.varUncType.get())[0]
-            cum_graph_to_draw = g_grainset.cpdp(gui_support.varUncType.get())
-            prob_title = "Probability Density Plot (PDP)"
-            cum_title = "Cumulative PDP"
+            g_prob_graph_to_draw = g_pdp[0]
+            g_cum_graph_to_draw = g_cpdp
+            g_prob_title = "Probability Density Plot (PDP)"
+            g_cum_title = "Cumulative PDP"
         else:
             tuple_list = sorted(list(g_grainset.good_set.values()), key=lambda x: x[0])
-            prob_graph_to_draw = [x[0] for x in tuple_list]
-            cum_graph_to_draw = []
-            prob_title = "Histogram"
-            cum_title = "Cumulative Histogram"
-        return[prob_graph_to_draw, cum_graph_to_draw, prob_title, cum_title]
+            g_prob_graph_to_draw = [x[0] for x in tuple_list]
+            g_cum_graph_to_draw = []
+            g_prob_title = "Histogram"
+            g_cum_title = "Cumulative Histogram"
+        return[g_prob_graph_to_draw, g_cum_graph_to_draw, g_prob_title, g_cum_title]
 
     def draw_concordia_ticks(self, xconc, yconc, min_age, max_age):
-        if max_age-min_age > 1000 and min_age > 500:
-            min_age = (min_age//1000+0.5)*1000
+        if max_age-min_age > 1000:
             step = 500
-        elif max_age-min_age > 1000 and min_age < 500:
-            min_age = 500
-            step = 500
+        elif 500 < max_age-min_age < 1000:
+            step = 250
+        elif 100 < max_age-min_age < 500:
+            step = 50
+        elif 50 < max_age-min_age < 100:
+            step = 25
         else:
-            min_age = (min_age//100+1)*100
-            step = 100
-        for t in range(int(min_age), int(max_age) , step):
+            step = 10
+        
+        if log10(min_age) >= 2:
+            x = -2
+        else:
+            x = -1
+        for t in range(int(truncate(min_age, x)), int(max_age)+step, step):
+            if t == 0:
+                t += 1
             x = calc_ratio(t)[xconc]
             y = calc_ratio(t)[yconc]
             self.ax_conc.plot(x, y, 'ks', markersize=3)
@@ -1402,7 +1268,7 @@ class OperationWindow(Frame):
                 corr_coef = zir.corr_coef_75_68
                 x_conc = zir.pb207_u235[0]  # x-center of the oval
                 y_conc = zir.pb206_u238[0]  # y-center of the oval
-                x_err = zir.pb207_u235[gui_support.varUncType.get()] #asdf
+                x_err = zir.pb207_u235[gui_support.varUncType.get()]
                 y_err = zir.pb206_u238[gui_support.varUncType.get()]
             # Tera-Wasserburg concordia
             else:
@@ -1440,60 +1306,70 @@ class OperationWindow(Frame):
                          fill=oval_fill)
             self.ax_conc.add_patch(el)
 
-    def plot_hist(self, min_age, max_age, prob_graph_to_draw):
+    def plot_hist(self, min_age, max_age):
+        global g_prob_graph_to_draw
         bin_sequence = []
         age = min_age
-        bin_width = self.scBinwidth.get()
+        bin_width = float(self.entHistBinwidth.get())
         while age < max_age:
             bin_sequence.append(age)
             age += bin_width
-        self.ax_prob.hist(prob_graph_to_draw, bins=bin_sequence, density=True, cumulative=False)
-        self.ax_cum.hist(prob_graph_to_draw, bins=bin_sequence, density=True, cumulative=True)
+        self.ax_prob.hist(g_prob_graph_to_draw, bins=bin_sequence, density=True, cumulative=False)
+        self.ax_cum.hist(g_prob_graph_to_draw, bins=bin_sequence, density=True, cumulative=True)
 
-    def set_axes(self, conc_title, conc_graph_xtitle, conc_graph_ytitle, prob_title, cum_title, conc_graph_x,
-                 conc_graph_y, min_age, max_age):
+    def set_axes(self, conc_title, conc_graph_xtitle, conc_graph_ytitle, conc_graph_x, conc_graph_y, min_age, max_age,
+                 min_conc_x, max_conc_x, min_conc_y, max_conc_y):
         # set axis of all graphs
+        global g_prob_title, g_cum_title
         self.ax_conc.set_title(conc_title)
-        self.ax_conc.set_xlabel(conc_graph_xtitle, labelpad=-12, fontsize=8, position=(0.54, 1e6))
-        self.ax_conc.set_ylabel(conc_graph_ytitle, fontsize=8)
-        self.ax_prob.set_title(prob_title)
-        self.ax_prob.set_xlabel('Age (Ma)', labelpad=-12, fontsize=8, position=(0.54, 1e6))
-        self.ax_cum.set_title(cum_title)
-        self.ax_cum.set_xlabel('Age (Ma)', labelpad=-12, fontsize=8, position=(0.54, 1e6))
+        self.ax_conc.set_xlabel(conc_graph_xtitle, labelpad=-16, fontsize=8, position=(0.54, 1e6))
+        self.ax_conc.set_ylabel(conc_graph_ytitle, labelpad=-38, fontsize=8)
+        self.ax_prob.set_title(g_prob_title)
+        self.ax_prob.set_xlabel('Age (Ma)', labelpad=-16, fontsize=8, position=(0.54, 1e6))
+        self.ax_cum.set_title(g_cum_title)
+        self.ax_cum.set_xlabel('Age (Ma)', labelpad=-16, fontsize=8, position=(0.54, 1e6))
         self.ax_conc.plot(conc_graph_x[min_age: max_age], conc_graph_y[min_age: max_age])
+        self.ax_conc.set_xlim(min_conc_x, max_conc_x)
+        self.ax_conc.set_ylim(min_conc_y, max_conc_y)
 
     def plot_peaks(self):
-        prob_graph_to_draw = self.kde_pdp_hist()[0]
+        global g_kde, g_pdp, g_prob_graph_to_draw, g_prob_title
+        g_prob_graph_to_draw = self.kde_pdp_hist()[0]
         min_max_age = self.min_max_ages()
         min_age = min_max_age[0]
         max_age = min_max_age[1]
         self.ax_prob.clear()
         self.canvas_prob.draw()
-        self.ax_prob.plot(list(range(min_age, max_age)), prob_graph_to_draw[min_age: max_age])
+        self.ax_prob.plot(list(range(min_age, max_age)), g_prob_graph_to_draw[min_age: max_age])
+
         if gui_support.varShowCalc.get() == 1:
             i = 0
+            self.ax_prob.set_title(g_prob_title)
             if g_graph_settings.pdp_kde_hist == 0:
-                list_peaks = g_grainset.kde(g_graph_settings.bandwidth)[1]
+                list_peaks = g_kde[1]
             elif g_graph_settings.pdp_kde_hist == 1:
-                list_peaks = g_grainset.pdp(gui_support.varUncType.get())[1]
+                list_peaks = g_pdp[1]
             else:
                 list_peaks = []
             while i < len(list_peaks):
                 self.ax_prob.axvline(list_peaks[i], color='black')
                 i += 1
-        else:
-           pass
+        self.ax_prob.set_xlabel('Age (Ma)', labelpad=-16, fontsize=8, position=(0.54, 1e6))
+        self.ax_prob.set_title(g_prob_title)
 
-    def prob_cum_plot(self, min_age, max_age, prob_graph_to_draw, cum_graph_to_draw):
-        self.ax_cum.plot(list(range(min_age, max_age)), cum_graph_to_draw[min_age: max_age])
+
+
+    def prob_cum_plot(self, min_age, max_age):
+        global g_prob_graph_to_draw, g_cum_graph_to_draw
+        self.ax_cum.plot(list(range(min_age, max_age)), g_cum_graph_to_draw[min_age: max_age])
         self.plot_peaks() #ax_prob.plot is done here
 
 
-    def prob_cum_hist_plot(self, do_hist, min_age, max_age, prob_graph_to_draw, cum_graph_to_draw):
+    def prob_cum_hist_plot(self, do_hist, min_age, max_age):
         if not do_hist:
-            self.prob_cum_plot(min_age, max_age, prob_graph_to_draw, cum_graph_to_draw)
+            self.prob_cum_plot(min_age, max_age)
         else:
-            self.plot_hist(min_age, max_age, prob_graph_to_draw)
+            self.plot_hist(min_age, max_age)
 
     def clear_prev_or_remove_text(self):
         # clears previous graph, if user chooses to in the cbKeepPrev, else just removes text from cum_plot
@@ -1506,21 +1382,31 @@ class OperationWindow(Frame):
         g_plot_txt = ""
 
     def plot_conc_text_peaks(self):
-        global g_prev_n, g_prev_cum
-        self.plot_text(set_pval_dval()[0], set_pval_dval()[1])
+        global g_prev_n, g_prev_cum, g_pval_dval, g_ckde, g_cpdp
+
+        self.plot_text(g_pval_dval[0], g_pval_dval[1])
         self.canvas_conc.draw()
         #self.canvas_prob.draw() and self.canvas_cum.draw are executed in plot_text
         self.btnClear.configure(state=NORMAL)
+        self.btnCalcWindow.configure(state=NORMAL)
         g_prev_n = g_number_of_good_grains
         if g_graph_settings.pdp_kde_hist == 0:
-            g_prev_cum = g_grainset.ckde(g_graph_settings.bandwidth)
+            g_prev_cum = g_ckde
         else:
-            g_prev_cum = g_grainset.cpdp(gui_support.varUncType.get())
+            g_prev_cum = g_cpdp
+
+    def set_plot_types_and_titles(self, kde_pdp_hist):
+        global g_prob_graph_to_draw, g_cum_graph_to_draw, g_prob_title, g_cum_title
+        g_prob_graph_to_draw = kde_pdp_hist[0]
+        g_cum_graph_to_draw = kde_pdp_hist[1]
+        g_prob_title = kde_pdp_hist[2]
+        g_cum_title = kde_pdp_hist[3]
 
     #draws the graph based on the data and user settings. Clears the previous graph, or draws on top of it,
     #depending on user settings
     def clear_and_plot(self, *args):
-        global g_filters, g_grainset, g_number_of_good_grains, g_plot_txt, g_prev_cum, g_prev_n
+        global g_filters, g_grainset, g_number_of_good_grains, g_plot_txt, g_prev_cum, g_prev_n, g_pval_dval
+        global g_cpdp, g_ckde, g_kde, g_pdp
         g_filters.sample_name_filter = []
 
         if gui_support.varMinAgeCrop.get() == 1:
@@ -1535,13 +1421,38 @@ class OperationWindow(Frame):
         g_filters.sample_name_filter = items
         g_number_of_good_grains = gui_support.fill_data_table(self.Table, g_grainset, g_filters, g_list_col_names)
 
+
         #checks if histogram is to be drawn
         do_hist = (g_graph_settings.pdp_kde_hist == 2)
 
+        g_kde = g_grainset.kde(g_graph_settings.bandwidth)
+        g_pdp = g_grainset.pdp(gui_support.varUncType.get())
+        g_cpdp= g_grainset.cpdp(gui_support.varUncType.get())
+        g_ckde = g_grainset.ckde(g_graph_settings.bandwidth)
+
+        set_pval_dval()
+
         # cropping age interval: either full, or cropped from min_age to max_age
         age_lim = self.min_max_ages()
-        min_age = age_lim[0]
-        max_age = age_lim[1]
+        
+        if gui_support.varMinAgeCrop.get() == 1:
+            min_age = int(self.entAgeMinCrop.get())
+            min_conc_x =calc_ratio(float(self.entAgeMinCrop.get()))[1]
+            min_conc_y =calc_ratio(float(self.entAgeMinCrop.get()))[0]
+        else:
+            min_age = age_lim[0]
+            min_conc_x = age_lim[2]
+            min_conc_y = age_lim[4]
+        if gui_support.varMaxAgeCrop.get() == 1:
+            max_age = int(self.entAgeMaxCrop.get())
+            max_conc_x =calc_ratio(float(self.entAgeMaxCrop.get()))[1]
+            max_conc_y =calc_ratio(float(self.entAgeMaxCrop.get()))[0]
+        else:    
+            max_age = age_lim[1]
+            max_conc_x = age_lim[3]
+            max_conc_y = age_lim[5]
+
+        #print (str(g_grainset.min_206_238))
 
         self.clear_prev_or_remove_text()
 
@@ -1560,14 +1471,15 @@ class OperationWindow(Frame):
 
         # choosing kde/pdp/hist
         l_kde_pdp_hist = self.kde_pdp_hist()
-        prob_graph_to_draw = l_kde_pdp_hist[0]
+        self.set_plot_types_and_titles(l_kde_pdp_hist)
+        '''prob_graph_to_draw = l_kde_pdp_hist[0]
         cum_graph_to_draw = l_kde_pdp_hist[1]
         prob_title = l_kde_pdp_hist[2]
-        cum_title = l_kde_pdp_hist[3]
+        cum_title = l_kde_pdp_hist[3]'''
 
         # set axis of all graphs
-        self.set_axes(conc_title, conc_graph_xtitle, conc_graph_ytitle, prob_title, cum_title, conc_graph_x,
-                      conc_graph_y, min_age, max_age)
+        self.set_axes(conc_title, conc_graph_xtitle, conc_graph_ytitle, conc_graph_x[1:EarthAge], conc_graph_y[1:EarthAge], min_age, max_age,
+                      min_conc_x, max_conc_x, min_conc_y, max_conc_y)
 
         self.draw_concordia_ticks(xconc, yconc, min_age, max_age)
 
@@ -1580,7 +1492,8 @@ class OperationWindow(Frame):
             self.plot_conc_ellipses(user_selected_analysis)
 
             # plotting KDE/CKDE, PDP/CPDP or histogram
-            self.prob_cum_hist_plot(do_hist, min_age, max_age, prob_graph_to_draw, cum_graph_to_draw)
+
+            self.prob_cum_hist_plot(do_hist, min_age, max_age)
 
         #except ValueError:
         #    self.lbShowStatus.configure(text="value error", fg="red")
@@ -1592,6 +1505,15 @@ class OperationWindow(Frame):
 
         finally:
             self.plot_conc_text_peaks()
+
+
+            #Testing the common lead routine
+
+            '''for zircon, zircon_age in g_grainset.good_set.items():
+            #     for i in range(2):
+            #         corr_age = pbc_corr(zircon, i)
+            #         print(corr_age)
+                print(pbc_corr(zircon, 1))'''
 
 # The following code is added to facilitate the Scrolled widgets
 class AutoScroll(object):
@@ -1682,30 +1604,33 @@ def is_editbox_float(edit_box, to_assign_to, to_replace_with):
 def main():
     global root, g_list_col_names, g_grainset, g_filters, g_graph_settings, prob_fig, prob_subplot
     global g_list_of_samples, g_directory, g_number_of_good_grains, g_prev_cum, g_prev_n
-    global g_pdp, g_cpdp, g_kde, g_ckde
+    global g_pdp, g_cpdp, g_kde, g_ckde, g_pval_dval, g_dezirteer_version
+    global g_prob_graph_to_draw, g_cum_graph_to_draw, g_prob_title, g_cum_title
+    g_dezirteer_version = '0.6.2020.05.10.01'
     g_pdp = []
     g_cpdp = []
     g_kde = []
     g_ckde = []
+    g_pval_dval = [-1, -1]
     g_prev_cum = []
     g_directory = "C:\Program Files (x86)\Dezirteer\Examples"
-    g_list_col_names = ['208Pb/232Th', '208/232±1s(Int)', '208/232±1s(Prop)',
-                        '207Pb/206Pb', '207/206±1s(Int)', '207/206±1s(Prop)',
-                        '207Pb/235U', '207/235±1s(Int)', '207/235±1s(Prop)',
-                        '206Pb/238U', '206/238±1s(Int)', '206/238±1s(Prop)',
+    g_list_col_names = ['208Pb/232Th', '208/232Err 1s(Int)', '208/232Err 1s(Prop)',
+                        '207Pb/206Pb', '207/206Err 1s(Int)', '207/206Err 1s(Prop)',
+                        '207Pb/235U', '207/235Err 1s(Int)', '207/235Err 1s(Prop)',
+                        '206Pb/238U', '206/238Err 1s(Int)', '206/238Err 1s(Prop)',
                         'corr. coef.75_68', 'corr. coef.86_76',
-                        'Uconc (approx. ppm)', 'Uconc±1s(Int)', 'Uconc±1s(Prop)',
-                        'pbc (approx. ppm)', 'pbc±1s(Int)', 'pbc±1s(Prop)',
-                        '206Pb/204Pb', '206/204±1s(Int)', '206/204±1s(Prop)',
-                        '207Pb/204Pb', '207/204±1s(Int)', '207/204±1s(Prop)',
-                        '208Pb/204Pb', '208/204±1s(Int)', '208/204±1s(Prop)',
-                        '232Th/204Pb', '232/204±1s(Int)', '232/204±1s(Prop)',
-                        '238U/204Pb', '238/204±1s(Int)', '238/204±1s(Prop)',
+                        'Uconc (approx. ppm)', 'UconcErr 1s(Int)', 'UconcErr 1s(Prop)',
+                        'pbc (approx. ppm)', 'pbcErr 1s(Int)', 'pbcErr 1s(Prop)',
+                        '206Pb/204Pb', '206/204Err 1s(Int)', '206/204Err 1s(Prop)',
+                        '207Pb/204Pb', '207/204Err 1s(Int)', '207/204Err 1s(Prop)',
+                        '208Pb/204Pb', '208/204Err 1s(Int)', '208/204Err 1s(Prop)',
+                        '232Th/204Pb', '232/204Err 1s(Int)', '232/204Err 1s(Prop)',
+                        '238U/204Pb', '238/204Err 1s(Int)', '238/204Err 1s(Prop)',
 
-                        'Age 208Pb/232Th', 'Age208/232±1s(Int)', 'Age208/232±1s(Prop)',
-                        'Age 207Pb/206Pb',  'Age207/206±1s(Int)', 'Age207/206±1s(Prop)',
-                        'Age 207Pb/235U', 'Age207/235±1s(Int)', 'Age207/235±1s(Prop)',
-                        'Age 206Pb/238U', 'Age206/238±1s(Int)', 'Age206/238±1s(Prop)',
+                        'Age 208Pb/232Th', 'Age208/232Err 1s(Int)', 'Age208/232Err 1s(Prop)',
+                        'Age 207Pb/206Pb',  'Age207/206Err 1s(Int)', 'Age207/206Err 1s(Prop)',
+                        'Age 207Pb/235U', 'Age207/235Err 1s(Int)', 'Age207/235Err 1s(Prop)',
+                        'Age 206Pb/238U', 'Age206/238Err 1s(Int)', 'Age206/238Err 1s(Prop)',
 
                         #'204-corr. age 208Pb/232Th', '204-corr. age 208Pb/232Th±1s(Int)', '204-corr. age 208Pb/232Th±1s(Prop)',
                         #'204-corr. age 207Pb/206Pb', '204-corr. age 207Pb/206Pb±1s(Int)', '204-corr. age 207Pb/206Pb±1s(Prop)',
@@ -1720,14 +1645,14 @@ def main():
 
                         'disc. 207/206-206/238', 'disc. 207/235-206/238',
                         'is grain good?', 'best age system',
-                        'best age', 'best age±1s']
+                        'best age', 'best ageErr 1s']
     fill_pbpb_table()
     fill_concordia_table()
     g_filters = Filters()
     g_prev_n = 0
     g_graph_settings = gui_support.GraphSettings()
     root = Tk()
-    root.title('De-Zir-teer')
+    root.title('Dezirteer: ' + g_dezirteer_version)
     root.wm_resizable(1, 1)
     gui_support.set_Tk_var()
     master = OperationWindow(root)
